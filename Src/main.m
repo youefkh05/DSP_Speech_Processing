@@ -27,46 +27,15 @@ time_fig_handle = plot_time_windows(n, W_Rec, W_Han, W_Ham);
 % 3. Save the Time Domain figure
 figure_to_png(time_fig_handle, 'problem1_time_domain',relative_path_to_plots); 
 
-%%
-% --- 2. Compute Frequency Responses (Log Magnitude dB) ---
+%% --- 2. Define Windows (Frequency Domain) ---
+% --- 1. Compute Frequency Responses (Log Magnitude dB) ---
+[f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted] = compute_freq_response(Fs, W_Rec, W_Han, W_Ham);
 
-% Apply FFT and compute magnitude
-fft_Rec = abs(fft(W_Rec));
-fft_Han = abs(fft(W_Han));
-fft_Ham = abs(fft(W_Ham));
+% --- 2. Plotting ---
+freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted);
 
-% Normalize the magnitude spectrum so the peak is 0 dB
-dB_Rec = 20*log10(fft_Rec / max(fft_Rec));
-dB_Han = 20*log10(fft_Han / max(fft_Han));
-dB_Ham = 20*log10(fft_Ham / max(fft_Ham));
-
-% Shift the zero-frequency component to the center for proper visualization
-dB_Rec_shifted = fftshift(dB_Rec);
-dB_Han_shifted = fftshift(dB_Han);
-dB_Ham_shifted = fftshift(dB_Ham);
-
-% Create the frequency vector for the x-axis
-f = linspace(-Fs/2, Fs/2, N);
-
-% --- 3. Plotting ---
-
-figure;
-plot(f, dB_Rec_shifted, 'LineWidth', 2); hold on;
-plot(f, dB_Han_shifted, 'LineWidth', 2);
-plot(f, dB_Ham_shifted, 'LineWidth', 2);
-hold off;
-
-% Set plot limits and labels
-xlim([-1000 1000]); % Zoom in near the main lobe
-ylim([-80 0]);      % Standard range for log magnitude plots
-grid on;
-title('Frequency Domain Analysis of Windows (Log Magnitude)');
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-legend('Rectangular', 'Hanning', 'Hamming', 'Location', 'SouthEast');
-
-% Save the plot (optional, for report structure)
-% saveas(gcf, 'results/plots/problem1_window_analysis.fig');
+% 3. Save the Frequency Domain figure
+figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
 
 %% --- Functions---
 % window generation function
@@ -96,7 +65,6 @@ function [W_Rec, W_Han, W_Ham, n] = generate_windows(N)
     W_Ham = 0.54 - 0.46 * cos(2*pi*n/N);
 
 end
-
 %% ---plot windows in time---
 function fig = plot_time_windows(n, W_Rec, W_Han, W_Ham)
 % PLOT_TIME_WINDOWS Plots Rectangular, Hanning, and Hamming windows in the time domain.
@@ -112,9 +80,15 @@ function fig = plot_time_windows(n, W_Rec, W_Han, W_Ham)
 %   Output:
 %       fig: The handle of the created MATLAB figure.
 
+    N = length(n);
+
     % Create the figure and capture its handle
     fig = figure('Name', 'Window Functions in Time Domain');
-
+    
+    % --- X-AXIS LIMIT DEFINITION ---
+    X_START = n(1);       % 0
+    X_END = n(end);       % N-1 (e.g., 1023)
+    
     % Subplot 1: Rectangular Window
     subplot(3, 1, 1);
     plot(n, W_Rec, 'b', 'LineWidth', 1.5);
@@ -122,6 +96,7 @@ function fig = plot_time_windows(n, W_Rec, W_Han, W_Ham)
     ylabel('Amplitude');
     grid on;
     ylim([0 1.1]);
+    xlim([X_START X_END]); % <--- Explicitly set X limit
     
     % Subplot 2: Hanning Window
     subplot(3, 1, 2);
@@ -130,6 +105,7 @@ function fig = plot_time_windows(n, W_Rec, W_Han, W_Ham)
     ylabel('Amplitude');
     grid on;
     ylim([0 1.1]);
+    xlim([X_START X_END]); % <--- Explicitly set X limit
     
     % Subplot 3: Hamming Window
     subplot(3, 1, 3);
@@ -139,10 +115,10 @@ function fig = plot_time_windows(n, W_Rec, W_Han, W_Ham)
     ylabel('Amplitude');
     grid on;
     ylim([0 1.1]);
+    xlim([X_START X_END]); % <--- Explicitly set X limit
     
     % Adjust layout for better visualization
-    sgtitle(['Time Domain Representation of Windows (N=', num2str(length(n)), ')'], 'FontSize', 14);
-
+    sgtitle(['Time Domain Representation of Windows (N=', num2str(N), ')'], 'FontSize', 14);
 end
 %% ---Get Audio Info---
 function [Fs, bitDepth, bitRate, numChannels, totalSamples] = get_audio_info(audio_file_path)
@@ -207,7 +183,7 @@ function [f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted] = compute_freq_resp
 %       W_Rec, W_Han, W_Ham: Time-domain window vectors (must be the same length N).
 %
 %   Outputs:
-%       f: Frequency vector for plotting (-Fs/2 to Fs/2).
+%       f: Frequency vector for plotting (perfectly centered around 0 Hz).
 %       dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted: Shifted log-magnitude
 %           spectra (in dB, normalized to 0 dB peak).
 
@@ -221,18 +197,83 @@ function [f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted] = compute_freq_resp
     
     %% --- 2. Normalize the magnitude spectrum so the peak is 0 dB ---
     % Normalization is done by dividing by the maximum value before taking log10
-    dB_Rec = 20 * log10(fft_Rec / max(fft_Rec));
-    dB_Han = 20 * log10(fft_Han / max(fft_Han));
-    dB_Ham = 20 * log10(fft_Ham / max(fft_Ham));
+    % A small epsilon is added to avoid log(0) which produces -Inf
+    epsilon = 1e-15; 
+    
+    dB_Rec = 20 * log10(fft_Rec / (max(fft_Rec) + epsilon) + epsilon);
+    dB_Han = 20 * log10(fft_Han / (max(fft_Han) + epsilon) + epsilon);
+    dB_Ham = 20 * log10(fft_Ham / (max(fft_Ham) + epsilon) + epsilon);
     
     %% --- 3. Shift the zero-frequency component to the center (DC at f=0) ---
     dB_Rec_shifted = fftshift(dB_Rec);
     dB_Han_shifted = fftshift(dB_Han);
     dB_Ham_shifted = fftshift(dB_Ham);
     
-    %% --- 4. Create the frequency vector for the x-axis ---
-    f = linspace(-Fs/2, Fs/2, N);
+    %% --- 4. Create the CORRECT frequency vector for the x-axis ---
+    % For an even length N (like 1024), the frequency vector should span 
+    % from -Fs/2 up to (but excluding) Fs/2.
+    f_index = (-N/2 : N/2 - 1);
+    f = f_index * (Fs / N);
 
+end
+%% ---plot windows in frequency---
+function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted)
+% PLOT_FREQ_WINDOWS Plots the shifted and normalized log-magnitude spectra
+%                     of the three window functions in separate subplots.
+%
+%   fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted)
+%
+%   Inputs:
+%       Fs: Sampling frequency (Hz).
+%       f: Frequency vector.
+%       dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted: Shifted log-magnitude spectra.
+%
+%   Output:
+%       fig: The handle of the created MATLAB figure.
+
+    % Define a magnitude floor (e.g., -80 dB) to clip -Inf and extremely small values for plotting clarity.
+    MAGNITUDE_FLOOR = -80; 
+    % Zoom limit: +/- Fs/16 (e.g., +/- 1000 Hz for Fs=16000)
+    X_LIMIT = Fs / 16; 
+
+    % Apply clipping to the dB values for better visualization
+    dB_Rec_clipped = max(dB_Rec_shifted, MAGNITUDE_FLOOR);
+    dB_Han_clipped = max(dB_Han_shifted, MAGNITUDE_FLOOR);
+    dB_Ham_clipped = max(dB_Ham_shifted, MAGNITUDE_FLOOR);
+
+    % Create the figure and capture its handle
+    fig = figure('Name', 'Window Functions in Frequency Domain');
+    
+    % --- Subplot 1: Rectangular Window ---
+    subplot(3, 1, 1);
+    plot(f, dB_Rec_clipped, 'b', 'LineWidth', 1.5);
+    title('Rectangular Window Frequency Response ($W_{Rec}$)', 'Interpreter', 'latex');
+    ylabel('Magnitude (dB)');
+    xlim([-X_LIMIT, X_LIMIT]); 
+    ylim([MAGNITUDE_FLOOR 0]);      
+    grid on;
+    
+    % --- Subplot 2: Hanning Window ---
+    subplot(3, 1, 2);
+    plot(f, dB_Han_clipped, 'r', 'LineWidth', 1.5);
+    title('Hanning Window Frequency Response ($W_{Han}$)', 'Interpreter', 'latex');
+    ylabel('Magnitude (dB)');
+    xlim([-X_LIMIT, X_LIMIT]); 
+    ylim([MAGNITUDE_FLOOR 0]);      
+    grid on;
+    
+    % --- Subplot 3: Hamming Window ---
+    subplot(3, 1, 3);
+    plot(f, dB_Ham_clipped, 'g', 'LineWidth', 1.5);
+    title('Hamming Window Frequency Response ($W_{Ham}$)', 'Interpreter', 'latex');
+    xlabel('Frequency (Hz)');
+    ylabel('Magnitude (dB)');
+    xlim([-X_LIMIT, X_LIMIT]); 
+    ylim([MAGNITUDE_FLOOR 0]);      
+    grid on;
+    
+    % Adjust layout for better visualization
+    sgtitle(['Frequency Domain Analysis of Windows (N=', num2str(length(f)), ', Fs=', num2str(Fs), ')'], 'FontSize', 14);
 end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
