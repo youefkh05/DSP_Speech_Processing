@@ -16,6 +16,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
+%{
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -36,6 +37,21 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
+%}
+%% Problem2 LPC Analysis based on given R data
+% --- 1. Define Input Data for Problem 2 ---
+
+% R_vector = [R(0), R(1), R(2), ..., R(p)]
+R_vector_p2 = [1, 0.7, 0.4];
+LPC_ORDER_p2 = length(R_vector_p2) - 1; % Should be 2
+
+fprintf('--- Problem 2: LPC (p=2) Solution Verification ---\n');
+
+% --- 2. Call the generalized solver function  ---
+[a_coeffs, E_error, p_order] = lpc_matrix_solution(R_vector_p2);
+
+% --- 3. Display Results ---
+print_lpc_results(a_coeffs, E_error, p_order, R_vector_p2);
 
 %% --- Functions---
 % window generation function
@@ -274,6 +290,124 @@ function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_s
     
     % Adjust layout for better visualization
     sgtitle(['Frequency Domain Analysis of Windows (N=', num2str(length(f)), ', Fs=', num2str(Fs), ')'], 'FontSize', 14);
+end
+%% --- LPC_MATRIX_SOLUTION ---
+function [a_coeffs, E_error, p_order] = lpc_matrix_solution(R_vector)
+% LPC_MATRIX_SOLUTION Solves the Yule-Walker (Normal) equations for LPC coefficients.
+%
+% This function solves the matrix equation R * a = -r, where R is the 
+% autocorrelation matrix, a is the vector of LPC coefficients, and r is 
+% the autocorrelation vector.
+%
+% Inputs:
+%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
+%             where R(0) is the first element.
+%
+% Outputs:
+%   a_coeffs: The LPC coefficients, a = [a1, a2, ..., ap].
+%   E_error:  The minimum mean-squared prediction error, E_p.
+%   p_order:  The prediction order, p.
+
+% --- 1. Determine Prediction Order (p) ---
+% The R_vector must contain p+1 elements: R(0) through R(p).
+if length(R_vector) < 2
+    error('R_vector must contain at least R(0) and R(1).');
+end
+p_order = length(R_vector) - 1;
+
+fprintf('Solving LPC system of order p = %d...\n', p_order);
+
+% --- 2. Construct the Autocorrelation Matrix (R) and Vector (r) ---
+
+% The Toeplitz Matrix R (size p x p)
+% R is constructed from the first p elements of R_vector.
+R_matrix = toeplitz(R_vector(1:p_order), R_vector(1:p_order));
+
+% The right-hand-side vector (-r) (size p x 1)
+% r_rhs = [ -R(1); -R(2); ...; -R(p) ]
+r_rhs = R_vector(2:end)'; % R_vector(2:end) are R(1) to R(p)
+
+% --- 3. Solve for LPC Coefficients (a) ---
+% Solve the linear system: R_matrix * a_coeffs = r_rhs
+a_coeffs = R_matrix \ r_rhs;
+
+% --- 4. Calculate the Minimum Mean-Squared Prediction Error (E_p) ---
+% E_p = R(0) + sum_{k=1}^{p} a_k * R(k)
+% In matrix form: E_p = R(0) + a' * r
+E_error = R_vector(1) + a_coeffs' * R_vector(2:end)';
+
+fprintf('LPC Solution Complete.\n');
+
+end
+%% --- PRINT R VECTOR ---
+function print_R_vector(R_vector)
+% PRINT_R_VECTOR prints the autocorrelation vector R in a clean,
+% human-readable format, specifying the lag indices.
+%
+% This function is useful for clearly displaying the input data for LPC
+% calculations in DSP assignments or reports.
+%
+% Inputs:
+%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
+%             where R(0) is the first element.
+
+    % Determine the prediction order 'p'. The length of R_vector is p+1.
+    p_order = length(R_vector) - 1;
+    
+    % --- 1. Construct the R(lag) labels ---
+    % Example: R(0), R(1), R(2)
+    labels = cell(1, p_order + 1);
+    for k = 0:p_order
+        labels{k+1} = sprintf('R(%d)', k);
+    end
+    
+    % Combine the labels into a single string: "R(0), R(1), R(2)"
+    labels_str = strjoin(labels, ', ');
+    
+    % --- 2. Construct the R values string (formatted to 4 decimal places) ---
+    % Convert the numeric vector to a string, formatted neatly.
+    R_values_str = sprintf('%.4f, ', R_vector);
+    
+    % Remove the trailing comma and space
+    R_values_str = R_values_str(1:end-2); 
+    
+    % --- 3. Print the final output string ---
+    % Example: Input Autocorrelation Vector R = [R(0), R(1), R(2)] = [1.0000, 0.7000, 0.4000]
+    fprintf('Input Autocorrelation Vector R = [%s] = [%s]\n', labels_str, R_values_str);
+
+end
+%% --- LPC results  ---
+function print_lpc_results(a_coeffs, E_error, p_order, R_vector)
+% PRINT_LPC_RESULTS prints the calculated LPC coefficients and prediction error.
+%
+% This function formats and displays the results of the Yule-Walker
+% matrix solution in a clean, human-readable format.
+%
+% Inputs:
+%   a_coeffs: The vector of LPC coefficients, [a1, a2, ..., ap].
+%   E_error:  The minimum mean-squared prediction error, E_p.
+%   p_order:  The prediction order, p.
+%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
+    
+    % --- Call the new printing function to display the input cleanly ---
+    print_R_vector(R_vector);
+
+    % prediction prder
+    fprintf('\n--- LPC Results (p=%d) ---\n', p_order);
+    fprintf('Prediction Order (p): %d\n', p_order);
+
+    
+    
+    % Loop through the coefficient vector to print each coefficient individually
+    num_coeffs = length(a_coeffs);
+    for k = 1:num_coeffs
+        fprintf('LPC Coefficient a%d: %.4f\n', k, a_coeffs(k));
+    end
+    
+    % Print the minimum prediction error
+    fprintf('Minimum Mean-Squared Error (E_%d): %.4f\n', p_order, E_error);
+    fprintf('------------------------\n');
+
 end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
