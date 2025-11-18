@@ -46,30 +46,7 @@ dsp-speech-processing/
     └── improvements_presentation.pptx
 ```
 
-## 🚀 Usage
 
-### Run Individual Problems
-```matlab
-% Open MATLAB and navigate to project directory
-cd src
-
-% Problem 1: Window Analysis
-problem1_windows
-
-% Problem 2-5: LPC and Formant Analysis
-problem2_lpc_autocorr
-problem3_lpc_frames
-problem4_pole_analysis
-problem5_lpc_spectrum
-
-% Problem 6: Vocoder
-cd problem6_vocoder
-vocoder_main
-
-% Problem 7: Digit Recognition
-cd ../problem7_recognition
-recognize_digit
-```
 
 ## 📊 Key Parameters
 
