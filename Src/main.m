@@ -37,7 +37,7 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
-%}
+
 %% Problem2 LPC Analysis based on given R data
 % --- 1. Define Input Data for Problem 2 ---
 
@@ -52,6 +52,38 @@ fprintf('--- Problem 2: LPC (p=2) Solution Verification ---\n');
 
 % --- 3. Display Results ---
 print_lpc_results(a_coeffs, E_error, p_order, R_vector_p2);
+%}
+
+%% Problem 3 Frame Analysis based on given S data
+% Problem: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
+% --- 1. Define Input Data for Problem 3 ---
+% Signal (s0 to s9)
+s = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5];
+
+frame_length = 6; % Frame Size
+P = 2; % LPC Order
+overlap = 2;
+frame_shift = frame_length - overlap;
+
+fprintf('--- Problem 3: LPC Analysis for Frame Size N=%d and Order P=%d ---\n', N, P);
+
+
+% --- 2. Call the generalized solver function  ---
+frames = extract_frames(s, frame_length, frame_shift);
+
+% --- 3. Display Results ---
+% Display the full signal with markers 
+frame_fig_handle = plot_frames(s, frames, frame_length, frame_shift, Fs);
+
+%  Save the frame figure
+figure_to_png(frame_fig_handle, 'problem3_frames',relative_path_to_plots); 
+
+% Display individual frames in a grid 
+frame_grid_handle = plot_frame_grid(frames, Fs);
+
+%  Save the frame grid figure
+figure_to_png(frame_grid_handle, 'problem3_frames_gird',relative_path_to_plots); 
+
 
 %% --- Functions---
 % window generation function
@@ -407,6 +439,261 @@ function print_lpc_results(a_coeffs, E_error, p_order, R_vector)
     % Print the minimum prediction error
     fprintf('Minimum Mean-Squared Error (E_%d): %.4f\n', p_order, E_error);
     fprintf('------------------------\n');
+
+end
+%% --- Get Frames  ---
+function frames = extract_frames(signal, frame_length, frame_shift)
+%EXTRACT_FRAMES Divides a 1D signal (e.g., speech) into frames, with zero-padding.
+%
+%   FRAMES = extract_frames(SIGNAL, FRAME_LENGTH, FRAME_SHIFT) divides the
+%   input SIGNAL vector into a matrix of frames. Each ROW of the output
+%   matrix FRAMES represents one frame. The last frame is zero-padded to
+%   ensure the entire original signal is covered.
+%
+% Inputs:
+%   signal       : The input signal vector (e.g., audio data).
+%   frame_length : The length of each frame, in samples (N).
+%   frame_shift  : The step size between the start of successive frames (the hop size), in samples (S).
+%                  Overlap is calculated as N - S.
+%
+% Output:
+%   frames       : A matrix where each ROW is a single frame of the signal.
+%                  Size is [Num_Frames, FRAME_LENGTH].
+%
+% Note: This implementation uses zero-padding to ensure the entire original
+%       signal is covered by the frames.
+
+% --- 1. Input Validation and Setup ---
+signal = signal(:); % Ensure the input signal is a column vector
+signal_length = length(signal);
+
+% Ensure parameters are positive integers and shift is <= length
+if frame_length <= 0 || frame_shift <= 0 || frame_shift > frame_length
+    error('Frame length (N) and shift (S) must be positive integers, and S must be <= N.');
+end
+
+% --- 2. Calculate Framing Parameters and Zero-Padding ---
+
+% Calculate the total number of frames required (K).
+% K = 1 + ceil((L - N) / S), where L=signal_length, N=frame_length, S=frame_shift
+if signal_length < frame_length
+    % If the signal is shorter than one frame, we still need one padded frame.
+    num_frames = 1;
+else
+    % Standard calculation for zero-padded framing
+    num_frames = 1 + ceil((signal_length - frame_length) / frame_shift);
+end
+
+% Calculate the total signal length required after padding (L_padded).
+% L_padded = (K - 1) * S + N
+required_length = (num_frames - 1) * frame_shift + frame_length;
+
+% Calculate how many zeros to append
+padding_amount = required_length - signal_length;
+
+% Apply padding only if necessary
+if padding_amount > 0
+    signal = [signal; zeros(padding_amount, 1)];
+end
+
+% --- 3. Frame Extraction (as Columns first, for efficient memory access) ---
+
+% Pre-allocate the output matrix with frames as columns: [N x K]
+temp_frames_as_cols = zeros(frame_length, num_frames);
+
+% Loop through and extract each frame
+for k = 1:num_frames
+    % Calculate the starting index for the current frame
+    start_index = 1 + (k - 1) * frame_shift;
+    
+    % The ending index is calculated relative to the start index
+    end_index = start_index + frame_length - 1;
+    
+    % Extract the segment and store it as a column in the temporary matrix
+    temp_frames_as_cols(:, k) = signal(start_index:end_index);
+end
+
+% --- 4. Transpose to finalize output: Frames as Rows ---
+% Transpose the matrix from [N x K] to [K x N]
+frames = temp_frames_as_cols.';
+
+end
+%% --- Plot Frames  ---
+function fig_handle = plot_frames(s, frames, frame_length, frame_shift, Fs)
+%PLOT_FRAMES Plots the original signal and visualizes individual frames using subplots.
+%
+%   FIG_HANDLE = plot_frames(S, FRAMES, FRAME_LENGTH, FRAME_SHIFT, Fs)
+%   Generates a figure with two subplots:
+%   1. Top Subplot: Time-domain plot of the entire signal (S) with markers
+%      showing the start of each frame.
+%   2. Bottom Subplot: Overlays the first 5 extracted frames to visualize 
+%      the content and overlap.
+%
+% Inputs:
+%   s            : The original input signal vector.
+%   frames       : The frame matrix, where each ROW is a frame (size [K x N]).
+%   frame_length : The length of each frame, in samples (N).
+%   frame_shift  : The hop size (step size) between frames, in samples (S).
+%   Fs           : The sampling frequency, in Hz (used for time scaling).
+%
+% Output:
+%   fig_handle   : Handle to the generated figure.
+
+    % Ensure input signal is a column vector
+    s = s(:);
+    signal_length = length(s);
+    num_frames = size(frames, 1); 
+    
+    % --- Time Axis Setup ---
+    time_s = (0:signal_length-1) / Fs; % Time vector for the original signal in seconds
+    start_indices = 1 + (0:(num_frames-1)) * frame_shift;
+    start_time = (start_indices - 1) / Fs;
+    
+    % Get the max amplitude of the signal for consistent scaling
+    max_amp = max(abs(s)) * 1.05;
+
+    % --- 1. Create Figure ---
+    fig_handle = figure;
+    set(fig_handle, 'Color', 'w'); % Set background to white
+
+    % --------------------------------------------------------------------
+    % Subplot 1: Full Signal Visualization
+    % --------------------------------------------------------------------
+    subplot(2, 1, 1);
+    plot(time_s, s, 'k', 'LineWidth', 1.5);
+    hold on;
+    
+    % Plot vertical lines at the start of each frame
+    for i = 1:num_frames
+        t = start_time(i);
+        
+        % Check for zero-padded frame (last frame)
+        is_padded = start_indices(i) + frame_length - 1 > signal_length;
+        
+        if is_padded
+            % Last zero-padded frame (red, dotted)
+            plot([t, t], [-max_amp, max_amp], 'r:', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+        else
+            % Normal frames (blue, dashed)
+            plot([t, t], [-max_amp, max_amp], 'b--', 'LineWidth', 1, 'HandleVisibility', 'off');
+        end
+        
+        % Label the frame start
+        if i <= 5 || i == num_frames
+             text(t, max_amp, sprintf('F%d', i), 'VerticalAlignment', 'bottom', 'HorizontalAlignment', 'center', 'FontSize', 8, 'Color', 'm');
+        end
+    end
+
+    % Styling
+    title('1. Full Signal with Frame Start Markers', 'FontSize', 12, 'FontWeight', 'bold');
+    xlabel('Time (s)', 'FontSize', 10);
+    ylabel('Amplitude', 'FontSize', 10);
+    grid on;
+    xlim([0, time_s(end)]); 
+    ylim([-max_amp, max_amp]);
+    hold off;
+
+    % --------------------------------------------------------------------
+    % Subplot 2: First Few Frames Overlaid
+    % --------------------------------------------------------------------
+    subplot(2, 1, 2);
+    
+    % Determine how many frames to plot in the detail view
+    frames_to_plot = min(5, num_frames); 
+    
+    if frames_to_plot > 0
+        % Time vector for a single frame (relative time from 0 to N-1 samples)
+        time_frame = (0:frame_length-1) / Fs;
+        
+        % Define colors for different frames
+        colors = lines(frames_to_plot); 
+        
+        for i = 1:frames_to_plot
+            % Plot the frame data. Frames are rows, so frames(i, :)
+            plot(time_frame, frames(i, :), 'Color', colors(i, :), 'LineWidth', 1, 'DisplayName', sprintf('Frame %d', i));
+            hold on;
+        end
+        
+        % Styling
+        title(sprintf('2. Detail View: First %d Extracted Frames Overlaid', frames_to_plot), 'FontSize', 12, 'FontWeight', 'bold');
+        xlabel('Time within Frame (s)', 'FontSize', 10);
+        ylabel('Amplitude', 'FontSize', 10);
+        legend('Location', 'southeast');
+        grid on;
+        xlim([0, time_frame(end)]);
+        ylim([-max_amp, max_amp]);
+    else
+        % Handle case where signal is too short
+        text(0.5, 0.5, 'No frames extracted (Signal too short).', 'HorizontalAlignment', 'center');
+    end
+
+    hold off;
+end
+%% --- Plot Frames grid  ---
+function fig_handle = plot_frame_grid(frames, Fs)
+%PLOT_FRAME_GRID Plots the first N frames in a grid of subplots.
+%
+%   FIG_HANDLE = plot_frame_grid(FRAMES, Fs)
+%   Generates a figure showing the waveform of the first 12 extracted 
+%   frames, each in its own subplot, arranged in a 3x4 grid. This is useful 
+%   for inspecting the exact content and overlap of the first few frames.
+%
+% Inputs:
+%   frames       : The frame matrix, where each ROW is a frame.
+%   Fs           : The sampling frequency, in Hz.
+%
+% Output:
+%   fig_handle   : Handle to the generated figure.
+
+    % --- Configuration ---
+    max_frames_to_show = 12;
+    rows = 3;
+    cols = 4;
+    
+    num_frames = size(frames, 1);
+    
+    if num_frames == 0
+        warning('PLOT_FRAME_GRID: No frames available to plot (Signal too short).');
+        return;
+    end
+
+    % Determine the number of frames to actually plot
+    frames_to_plot = min(max_frames_to_show, num_frames); 
+    
+    % --- Create Figure ---
+    fig_handle = figure;
+    % Make the figure large for better readability of the subplots
+    set(fig_handle, 'Color', 'w', 'Units', 'normalized', 'OuterPosition', [0.1 0.1 0.8 0.8]); 
+    
+    % Get max amplitude across all selected frames for consistent Y-axis scaling
+    max_amp = max(abs(frames(1:frames_to_plot, :)), [], 'all') * 1.05;
+
+    % Time vector for a single frame (relative time from 0 to N-1 samples)
+    frame_length = size(frames, 2);
+    time_frame = (0:frame_length-1) / Fs;
+
+    % Loop through the frames and generate subplots
+    for i = 1:frames_to_plot
+        % Select the subplot position
+        subplot(rows, cols, i);
+        
+        % Plot the individual frame
+        plot(time_frame, frames(i, :), 'b', 'LineWidth', 1.2);
+        
+        % Styling
+        title(sprintf('Frame %d', i), 'FontSize', 10, 'FontWeight', 'bold');
+        xlabel('Time (s)', 'FontSize', 8);
+        ylabel('Amplitude', 'FontSize', 8);
+        
+        % Set consistent limits for all frames
+        xlim([0, time_frame(end)]);
+        ylim([-max_amp, max_amp]);
+        grid on;
+    end
+    
+    % Super title for the entire figure
+    sgtitle(sprintf('Detailed Visualization: First %d Individual Speech Frames (%d samples/frame)', frames_to_plot, frame_length), ...
+            'FontSize', 14, 'FontWeight', 'bold');
 
 end
 %% ---save figure to picture---
