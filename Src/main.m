@@ -37,22 +37,29 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
-
+%}
 %% Problem2 LPC Analysis based on given R data
 % --- 1. Define Input Data for Problem 2 ---
 
 % R_vector = [R(0), R(1), R(2), ..., R(p)]
-R_vector_p2 = [1, 0.7, 0.4];
-LPC_ORDER_p2 = length(R_vector_p2) - 1; % Should be 2
+R_matrix2 = [1, 0.7, 0.4];
+LPC_ORDER_p2 = length(R_matrix2) - 1; % Should be 2
+frames=[1,2,3];
 
-fprintf('--- Problem 2: LPC (p=2) Solution Verification ---\n');
+% print it
+print_R_matrix(R_matrix2);
 
-% --- 2. Call the generalized solver function  ---
-[a_coeffs, E_error, p_order] = lpc_matrix_solution(R_vector_p2);
+fprintf('--- Problem 2: LPC (p=%d) Solution Verification ---\n',LPC_ORDER_p2);
 
-% --- 3. Display Results ---
-print_lpc_results(a_coeffs, E_error, p_order, R_vector_p2);
-%}
+
+% --- 5. Call the generalized solver function  ---
+[A_matrix2, E_vector2,P2] = lpc_matrix_solution(R_matrix2);
+
+% --- 7. Display Results ---
+problem2_fig_handle = print_lpc_matrix_results(frames, A_matrix2, E_vector2, R_matrix2);
+
+%  Save the frame grid figure
+figure_to_png(problem2_fig_handle, 'problem2_sol',relative_path_to_plots); 
 
 %% Problem 3 Frame Analysis based on given S data
 % Problem: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
@@ -69,21 +76,37 @@ fprintf('--- Problem 3: LPC Analysis for Frame Size N=%d and Order P=%d ---\n', 
 
 
 % --- 2. Call the generalized solver function  ---
-frames = extract_frames(s, frame_length, frame_shift);
+frames3a = extract_frames(s, frame_length, frame_shift);
 
 % --- 3. Display Results ---
 % Display the full signal with markers 
-frame_fig_handle = plot_frames(s, frames, frame_length, frame_shift, Fs);
+frame_fig_handle = plot_frames(s, frames3a, frame_length, frame_shift, Fs);
 
 %  Save the frame figure
-figure_to_png(frame_fig_handle, 'problem3_frames',relative_path_to_plots); 
+figure_to_png(frame_fig_handle, 'problem3a_frames',relative_path_to_plots); 
 
 % Display individual frames in a grid 
-frame_grid_handle = plot_frame_grid(frames, Fs);
+frame_grid_handle = plot_frame_grid(frames3a, Fs);
 
 %  Save the frame grid figure
-figure_to_png(frame_grid_handle, 'problem3_frames_gird',relative_path_to_plots); 
+figure_to_png(frame_grid_handle, 'problem3a_frames_gird',relative_path_to_plots); 
 
+% --- 4. calculate autocorrelation  ---
+R_matrix3a = calculate_autocorr_frames(frames3a, P);
+
+% print it
+print_R_matrix(R_matrix3a);
+
+fprintf('--- Problem 3: LPC (p=%d) Solution Verification ---\n',P);
+
+% --- 5. Call the generalized solver function  ---
+[A_matrix3a, E_vector3a,P3a] = lpc_matrix_solution(R_matrix3a);
+
+% --- 7. Display Results ---
+problem3a_fig_handle = print_lpc_matrix_results(frames3a, A_matrix3a, E_vector3a, R_matrix3a);
+
+%  Save the frame grid figure
+figure_to_png(problem3a_fig_handle, 'problem3a_sol',relative_path_to_plots); 
 
 %% --- Functions---
 % window generation function
@@ -324,122 +347,244 @@ function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_s
     sgtitle(['Frequency Domain Analysis of Windows (N=', num2str(length(f)), ', Fs=', num2str(Fs), ')'], 'FontSize', 14);
 end
 %% --- LPC_MATRIX_SOLUTION ---
-function [a_coeffs, E_error, p_order] = lpc_matrix_solution(R_vector)
-% LPC_MATRIX_SOLUTION Solves the Yule-Walker (Normal) equations for LPC coefficients.
+function [A_matrix, E_vector,P] = lpc_matrix_solution(R_matrix)
+%LPC_MATRIX_SOLUTION Solves the Yule-Walker (Normal) equations for LPC coefficients 
+%   for multiple frames using direct matrix inversion.
 %
-% This function solves the matrix equation R * a = -r, where R is the 
-% autocorrelation matrix, a is the vector of LPC coefficients, and r is 
-% the autocorrelation vector.
+%   [A_MATRIX, E_VECTOR] = lpc_matrix_solution(R_MATRIX)
 %
 % Inputs:
-%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
-%             where R(0) is the first element.
+%   R_matrix : Matrix where each ROW contains the autocorrelation 
+%              coefficients for one frame: [R[0], R[1], ..., R[P]].
 %
 % Outputs:
-%   a_coeffs: The LPC coefficients, a = [a1, a2, ..., ap].
-%   E_error:  The minimum mean-squared prediction error, E_p.
-%   p_order:  The prediction order, p.
+%   A_matrix : Matrix where each ROW contains the final filter denominator 
+%              coefficients: [ a[1], a[2], ..., a[P]].
+%   E_vector : Column vector containing the minimum mean-squared error (E_P) 
+%              for each frame.
 
-% --- 1. Determine Prediction Order (p) ---
-% The R_vector must contain p+1 elements: R(0) through R(p).
-if length(R_vector) < 2
-    error('R_vector must contain at least R(0) and R(1).');
+    % --- 1. Setup and Pre-allocation ---
+    [num_frames, P_plus_1] = size(R_matrix);
+    P = P_plus_1 - 1; % Prediction order P
+    
+    % A_matrix will store the final filter denominator coefficients A = [ a1, ...]
+    A_matrix = zeros(num_frames, P);
+    
+    % E_vector stores the final prediction error E_P
+    E_vector = zeros(num_frames, 1);
+    
+    fprintf('Solving LPC system of order p = %d for %d frames via Matrix Inversion...\n', P, num_frames);
+
+    % --- 2. Process Each Frame ---
+    for k = 1:num_frames
+        R_vector = R_matrix(k, :); % R_vector = [R(0), R(1), ..., R(P)]
+        
+        % R_0 is R(0)
+        R_0 = R_vector(1); 
+        
+        % Check for zero energy frame
+        if R_0 < 1e-10
+            A_matrix(k, :) = [1, zeros(1, P)]; 
+            E_vector(k) = 0;
+            continue; 
+        end
+        
+        % --- 3. Construct the Autocorrelation Matrix (R) and Vector (-r) ---
+        
+        % The Toeplitz Matrix R_P (size P x P) from R(0) to R(P-1)
+        % R_vector(1:P) are R(0) to R(P-1)
+        R_P_matrix = toeplitz(R_vector(1:P), R_vector(1:P));
+        
+        % The right-hand-side vector (-r_P) (size P x 1)
+        % r_P = [R(1); R(2); ...; R(P)]. The RHS is -r_P.
+        % R_vector(2:end) are R(1) to R(P)
+        r_P_rhs = R_vector(2:end)';
+        
+        % --- 4. Solve for Predictor Coefficients (a) ---
+        % Solve the linear system: R_P_matrix * a_coeffs = -r_P
+        % a_coeffs = [a1, a2, ..., aP]
+        a_predictor_coeffs = R_P_matrix \ r_P_rhs;
+        
+        % --- 5. Calculate the Minimum Mean-Squared Prediction Error (E_P) ---
+        % E_P = R(0) + sum_{k=1}^{P} a_k * R(k) = R(0) + a' * r_P
+        % Note: R_vector(2:end)' is the vector r_P
+        E_P_error = R_0 + a_predictor_coeffs' * R_vector(2:end)';
+        
+        % --- 6. Store Final Results ---
+        % The filter denominator coefficients are A = [ a1, a2, ..., aP]
+        A_matrix(k, :) = [ a_predictor_coeffs'];
+        E_vector(k) = E_P_error;
+    end
+    
+    fprintf('Matrix Solution Complete. (Filter A(z) coefficients returned: [a1, ..., aP])\n');
 end
-p_order = length(R_vector) - 1;
-
-fprintf('Solving LPC system of order p = %d...\n', p_order);
-
-% --- 2. Construct the Autocorrelation Matrix (R) and Vector (r) ---
-
-% The Toeplitz Matrix R (size p x p)
-% R is constructed from the first p elements of R_vector.
-R_matrix = toeplitz(R_vector(1:p_order), R_vector(1:p_order));
-
-% The right-hand-side vector (-r) (size p x 1)
-% r_rhs = [ -R(1); -R(2); ...; -R(p) ]
-r_rhs = R_vector(2:end)'; % R_vector(2:end) are R(1) to R(p)
-
-% --- 3. Solve for LPC Coefficients (a) ---
-% Solve the linear system: R_matrix * a_coeffs = r_rhs
-a_coeffs = R_matrix \ r_rhs;
-
-% --- 4. Calculate the Minimum Mean-Squared Prediction Error (E_p) ---
-% E_p = R(0) + sum_{k=1}^{p} a_k * R(k)
-% In matrix form: E_p = R(0) + a' * r
-E_error = R_vector(1) + a_coeffs' * R_vector(2:end)';
-
-fprintf('LPC Solution Complete.\n');
-
-end
-%% --- PRINT R VECTOR ---
-function print_R_vector(R_vector)
-% PRINT_R_VECTOR prints the autocorrelation vector R in a clean,
-% human-readable format, specifying the lag indices.
+%% --- PRINT R Matrix ---
+function print_R_matrix(R_matrix)
+% PRINT_R_VECTOR prints the autocorrelation matrix R in a clean,
+% human-readable format, specifying the lag indices for each frame.
 %
-% This function is useful for clearly displaying the input data for LPC
-% calculations in DSP assignments or reports.
+% This function is updated to handle a matrix input (multiple frames).
 %
 % Inputs:
-%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
-%             where R(0) is the first element.
-
-    % Determine the prediction order 'p'. The length of R_vector is p+1.
-    p_order = length(R_vector) - 1;
+%   R_matrix: The autocorrelation matrix, where each ROW is a frame's
+%             autocorrelation vector R = [R(0), R(1), ..., R(p)]
     
-    % --- 1. Construct the R(lag) labels ---
-    % Example: R(0), R(1), R(2)
-    labels = cell(1, p_order + 1);
-    for k = 0:p_order
+    % Get dimensions of the R matrix
+    [num_frames, P_plus_1] = size(R_matrix);
+    % Determine the prediction order 'p'
+    P_order = P_plus_1 - 1;
+    
+    % --- 1. Construct the R(lag) labels (only needs to be done once) ---
+    labels = cell(1, P_plus_1);
+    for k = 0:P_order
         labels{k+1} = sprintf('R(%d)', k);
     end
-    
-    % Combine the labels into a single string: "R(0), R(1), R(2)"
     labels_str = strjoin(labels, ', ');
     
-    % --- 2. Construct the R values string (formatted to 4 decimal places) ---
-    % Convert the numeric vector to a string, formatted neatly.
-    R_values_str = sprintf('%.4f, ', R_vector);
+    fprintf('\n--- Autocorrelation Analysis: R[0] to R[%d] for %d Frames ---\n', P_order, num_frames);
     
-    % Remove the trailing comma and space
-    R_values_str = R_values_str(1:end-2); 
-    
-    % --- 3. Print the final output string ---
-    % Example: Input Autocorrelation Vector R = [R(0), R(1), R(2)] = [1.0000, 0.7000, 0.4000]
-    fprintf('Input Autocorrelation Vector R = [%s] = [%s]\n', labels_str, R_values_str);
-
+    % --- 2. Loop through each frame (row of the matrix) and print ---
+    for frame_idx = 1:num_frames
+        % Extract the R vector for the current frame
+        R_vector = R_matrix(frame_idx, :);
+        
+        % Construct the R values string (formatted to 4 decimal places)
+        R_values_str = sprintf('%.4f, ', R_vector);
+        
+        % Remove the trailing comma and space
+        R_values_str = R_values_str(1:end-2); 
+        
+        % Print the final output string for the current frame
+        fprintf('Frame %d R = [%s] = [%s]\n', frame_idx, labels_str, R_values_str);
+    end
+    fprintf('------------------------------------------------------------------\n');
 end
 %% --- LPC results  ---
-function print_lpc_results(a_coeffs, E_error, p_order, R_vector)
-% PRINT_LPC_RESULTS prints the calculated LPC coefficients and prediction error.
-%
-% This function formats and displays the results of the Yule-Walker
-% matrix solution in a clean, human-readable format.
+function figHandle = print_lpc_matrix_results(X_frames, A_matrix, E_vector, R_matrix)
+%PRINT_LPC_MATRIX_RESULTS Generates a MATLAB figure containing a formatted 
+%   table of LPC analysis results. This version formats all numeric data
+%   to strings to ensure compatibility with various MATLAB versions.
 %
 % Inputs:
-%   a_coeffs: The vector of LPC coefficients, [a1, a2, ..., ap].
-%   E_error:  The minimum mean-squared prediction error, E_p.
-%   p_order:  The prediction order, p.
-%   R_vector: The autocorrelation vector, R = [R(0), R(1), R(2), ..., R(p)]
-    
-    % --- Call the new printing function to display the input cleanly ---
-    print_R_vector(R_vector);
+%   X_frames: Matrix where each ROW contains the raw signal samples for the frame.
+%   A_matrix: Matrix where each ROW contains the LPC predictor 
+%             coefficients: [a[1], a[2], ..., a[P]].
+%   E_vector: Column vector containing the minimum mean-squared error (E_P) 
+%             for each frame.
+%   R_matrix: Matrix where each ROW contains the autocorrelation 
+%             coefficients: [R[0], R[1], ..., R[P]].
+%
+% Output:
+%   figHandle: Handle to the generated figure.
 
-    % prediction prder
-    fprintf('\n--- LPC Results (p=%d) ---\n', p_order);
-    fprintf('Prediction Order (p): %d\n', p_order);
-
+    % --- 1. Determine Dimensions and Order ---
+    [num_frames, P] = size(A_matrix);
     
-    
-    % Loop through the coefficient vector to print each coefficient individually
-    num_coeffs = length(a_coeffs);
-    for k = 1:num_coeffs
-        fprintf('LPC Coefficient a%d: %.4f\n', k, a_coeffs(k));
+    if num_frames == 0
+        figHandle = [];
+        fprintf('--- LPC Results ---\n');
+        fprintf('No frames processed. A_matrix is empty.\n');
+        return;
     end
     
-    % Print the minimum prediction error
-    fprintf('Minimum Mean-Squared Error (E_%d): %.4f\n', p_order, E_error);
-    fprintf('------------------------\n');
+    [~, num_samples_per_frame] = size(X_frames);
+    MAX_SAMPLES_TO_SHOW = 6; % Show up to 6 samples
+    samples_to_print = min(num_samples_per_frame, MAX_SAMPLES_TO_SHOW);
+    
+    % --- 2. Create Headers ---
+    headers = {'Frame Index'};
+    
+    % Add Samples Header
+    sample_header_str = sprintf('Samples (first %d)', samples_to_print);
+    if num_samples_per_frame > MAX_SAMPLES_TO_SHOW
+        sample_header_str = [sample_header_str, ' ...'];
+    end
+    headers = [headers, sample_header_str];
 
+    % Add R Coefficients Headers
+    for p_idx = 0:P
+        headers = [headers, sprintf('R(%d)', p_idx)];
+    end
+    
+    % Add Error Header
+    headers = [headers, 'Error (E_P)'];
+    
+    % Add A Coefficients Headers
+    for p_idx = 1:P
+        headers = [headers, sprintf('a%d', p_idx)];
+    end
+    
+    % --- 3. Format Data into Cell Array of Strings ---
+    % We convert all numerical data to strings with 4 decimal places for display.
+    data_cell = cell(num_frames, length(headers));
+    
+    for k = 1:num_frames
+        
+        % 1. Frame Index (Formatted to String)
+        data_cell{k, 1} = sprintf('%d', k);
+        
+        % 2. Samples String (Formatted for display)
+        sample_str = '';
+        for i = 1:samples_to_print
+            % Use %s.0f for integer-like samples
+            sample_str = [sample_str, sprintf('%d ', round(X_frames(k, i)))];
+        end
+        if num_samples_per_frame > MAX_SAMPLES_TO_SHOW
+            sample_str = [sample_str, '...'];
+        end
+        data_cell{k, 2} = strtrim(sample_str); 
+        
+        col_idx = 3; 
+
+        % 3. R Coefficients (Formatted to String)
+        for r_val = R_matrix(k, :)
+            data_cell{k, col_idx} = sprintf('%.4f', r_val);
+            col_idx = col_idx + 1;
+        end
+        
+        % 4. Error (E_P) (Formatted to String)
+        data_cell{k, col_idx} = sprintf('%.4f', E_vector(k));
+        col_idx = col_idx + 1;
+        
+        % 5. A Coefficients (Formatted to String)
+        for a_val = A_matrix(k, :)
+            data_cell{k, col_idx} = sprintf('%.4f', a_val);
+            col_idx = col_idx + 1;
+        end
+    end
+    
+    % --- 4. Create Figure and Uitable ---
+    figHandle = figure('Name', 'LPC Analysis Results Table', 'NumberTitle', 'off', 'Color', 'w');
+    
+    u = uitable(figHandle);
+    u.Data = data_cell;
+    u.ColumnName = headers;
+    u.RowName = {}; % Hide row numbers
+    u.Units = 'normalized';
+    u.Position = [0.02 0.02 0.96 0.93]; % Full figure size with margin
+    u.FontSize = 10;
+    
+    % Since all data is now stored as strings, we don't need 'ColumnFormat' 
+    % or 'ColumnDisplayFormat', increasing compatibility.
+    
+    % Set column widths for better fit
+    col_widths = {50, 'auto'}; % Frame index width and Samples auto-width
+    fixed_width = {70}; 
+    for i = 3:length(headers)
+        col_widths = [col_widths, fixed_width];
+    end
+    u.ColumnWidth = col_widths;
+
+    % Add title to the figure
+    title_str = sprintf('LPC Analysis Results Table (Prediction Order P=%d)', P);
+    uicontrol('Style', 'text', 'String', title_str, ...
+              'Units', 'normalized', 'Position', [0.3 0.95 0.4 0.05], ...
+              'FontSize', 14, 'FontWeight', 'bold', 'BackgroundColor', 'w');
+
+    % Maximize the figure for better view if it has many columns
+    set(figHandle, 'WindowState', 'maximized');
+    
+    fprintf('\nLPC Results Table successfully generated in a figure window (handle: %d).\n', figHandle.Number);
 end
 %% --- Get Frames  ---
 function frames = extract_frames(signal, frame_length, frame_shift)
@@ -696,11 +841,61 @@ function fig_handle = plot_frame_grid(frames, Fs)
             'FontSize', 14, 'FontWeight', 'bold');
 
 end
+%% --- calculate autocorrelation  ---
+function R_matrix = calculate_autocorr_frames(frames, P)
+%CALCULATE_AUTOCORR_FRAMES Calculates the autocorrelation coefficients for each frame.
+%
+%   R_MATRIX = calculate_autocorr_frames(FRAMES, P) computes the first P+1
+%   autocorrelation coefficients (R[0] to R[P]) for every frame in the input
+%   matrix FRAMES.
+%
+% Inputs:
+%   frames : Matrix where each ROW is a single signal frame (K x N).
+%   P      : The order of the Linear Predictive Coding (LPC order). The 
+%            output R_matrix will have P+1 columns (R[0] to R[P]).
+%
+% Output:
+%   R_matrix : A matrix where each ROW contains the autocorrelation 
+%              coefficients for one frame. Size is [K x (P+1)].
+
+    % --- 1. Setup and Pre-allocation ---
+    num_frames = size(frames, 1);
+    frame_length = size(frames, 2);
+    
+    % The output matrix will have K rows (frames) and P+1 columns (R[0]..R[P])
+    R_matrix = zeros(num_frames, P + 1);
+    
+    % --- 2. Iterative Autocorrelation Calculation ---
+    % Loop through each frame (row of the input matrix)
+    for k = 1:num_frames
+        % Get the current frame (ensure it's treated as a row vector)
+        current_frame = frames(k, :);
+        
+        % Calculate the full autocorrelation sequence R_full using xcorr
+        % R_full will have 2*N - 1 elements.
+        R_full = xcorr(current_frame);
+        
+        % The lag 0 correlation (R[0]) is located at the center of R_full.
+        % For a sequence of length N, xcorr gives 2N-1 values.
+        % The center index (lag 0) is N.
+        lag0_index = frame_length;
+        
+        % Extract the positive lags from R[0] up to R[P].
+        % This corresponds to indices: R[lag0_index] to R[lag0_index + P]
+        autocorr_coeffs = R_full(lag0_index : lag0_index + P);
+        
+        % Store the resulting P+1 coefficients in the output matrix
+        R_matrix(k, :) = autocorr_coeffs;
+    end
+    
+end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
 % FIGURE_TO_PNG Saves a specified MATLAB figure handle as a high-quality PNG file.
 %
-%   figure_to_png(figHandle, filename, relative_save_path)
+%   NOTE: This final version uses 'exportapp' (the recommended method for
+%         figures containing UI components like uitable) to eliminate the 
+%         "UI components will not be included" warning.
 %
 %   Inputs:
 %       figHandle: Handle to the figure object.
@@ -709,23 +904,20 @@ function figure_to_png(figHandle, filename, relative_save_path)
 %
 %   Output:
 %       Saves the figure as a PNG file in the specified directory structure.
-
-    % 1. Determine the current directory of this function (e.g., .../DSP_Speech_Processing/Src)
+    
+    % 1. Determine the current directory of this function
     current_file_path = mfilename('fullpath');
     current_dir = fileparts(current_file_path);
-
-    % 2. Construct the absolute output directory path by combining the current directory 
-    %    with the relative path provided by the user.
-    %    fullfile handles platform-specific path separators (\ or /).
+    
+    % 2. Construct the absolute output directory path
     outputDir = fullfile(current_dir, relative_save_path);
     
     % 3. Ensure the output directory exists
     if ~exist(outputDir, 'dir')
-        % Try to create the directory and all parent directories if necessary
         [success, message, ~] = mkdir(outputDir);
         if ~success
             fprintf(2, 'Error creating directory %s: %s\n', outputDir, message);
-            return; % Exit the function if directory creation fails
+            return; 
         end
     end
     
@@ -733,18 +925,36 @@ function figure_to_png(figHandle, filename, relative_save_path)
     fullPath = fullfile(outputDir, [filename, '.png']);
     
     try
-        % Set common properties for high-quality export
-        set(figHandle, 'PaperPositionMode', 'auto');
-        set(figHandle, 'Renderer', 'painters'); 
+        % Force a redraw before saving to ensure everything is rendered
+        drawnow; 
         
-        % Save the figure to PNG format (300 DPI resolution)
-        print(figHandle, fullPath, '-dpng', '-r300');
-        
-        fprintf('Successfully saved figure to: %s\n', fullPath);
+        % --- Final Robust Saving Method: Use exportapp ---
+        % Using exportapp(figHandle, fullPath) is the most robust way to save 
+        % figures containing uitables. It treats the figure as an application 
+        % window, ensuring all UI elements are rendered correctly, and is 
+        % compatible with figures containing only graphics as well.
+        if exist('exportapp', 'file')
+            % Use exportapp for universal, warning-free UI component export
+            % The minimal syntax avoids the "Too many input arguments" error 
+            % seen in the previous attempt.
+            exportapp(figHandle, fullPath); 
+            fprintf('Successfully saved figure (using exportapp) to: %s\n', fullPath);
+        else 
+            % Fallback to 'exportgraphics' if 'exportapp' is unavailable
+            if exist('exportgraphics', 'file')
+                 exportgraphics(figHandle, fullPath, 'Resolution', 300);
+                 fprintf('Successfully saved figure (using exportgraphics fallback) to: %s\n', fullPath);
+            else
+                 % Final fallback for old MATLAB versions
+                 set(figHandle, 'PaperPositionMode', 'auto');
+                 print(figHandle, fullPath, '-dpng', '-r300');
+                 fprintf('Successfully saved figure (using print fallback) to: %s\n', fullPath);
+            end
+        end
         
     catch ME
-        % Display an error message if saving fails
+        % Print the actual error message that occurred during saving
         fprintf(2, 'Error saving figure %s: %s\n', filename, ME.message);
-        disp('Check if the figure handle is valid or if file permissions allow saving.');
+        disp('Saving failed. Check figure handle, file permissions, and MATLAB version compatibility.');
     end
 end
