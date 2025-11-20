@@ -1,7 +1,7 @@
 clear; 
 clc; 
 close all;
-%{
+
 %% Problem1 Analyze the frequency domain characteristics of Rectangular, Hanning, and Hamming windows.
 %% --- Parameters ---
 N = 1024;   % Window length (should be large, e.g., 512 or 1024, for good frequency resolution)
@@ -16,7 +16,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
-
+%{
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -72,7 +72,7 @@ P = 2; % LPC Order
 overlap = 2;
 frame_shift = frame_length - overlap;
 
-fprintf('--- Problem 3: LPC Analysis for Frame Size N=%d and Order P=%d ---\n', N, P);
+fprintf('--- Problem 3a: LPC Analysis for Frame Size N=%d and Order P=%d ---\n', frame_length, P);
 
 
 % --- 2. Call the generalized solver function  ---
@@ -97,7 +97,7 @@ R_matrix3a = calculate_autocorr_frames(frames3a, P);
 % print it
 print_R_matrix(R_matrix3a);
 
-fprintf('--- Problem 3: LPC (p=%d) Solution Verification ---\n',P);
+fprintf('--- Problem 3a: LPC (p=%d) Solution Verification ---\n',P);
 
 % --- 5. Call the generalized solver function  ---
 [A_matrix3a, E_vector3a,P3a] = lpc_matrix_solution(R_matrix3a);
@@ -107,6 +107,50 @@ problem3a_fig_handle = print_lpc_matrix_results(frames3a, A_matrix3a, E_vector3a
 
 %  Save the frame grid figure
 figure_to_png(problem3a_fig_handle, 'problem3a_sol',relative_path_to_plots); 
+
+%% Problem 3b: LPC Analysis with Pre-emphasis (alpha=0.96)
+% --- 1. Define Input Data for Problem 3 ---
+% Signal: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
+% Pre-emphasis constant: alpha = 0.96
+pre_alpha = 0.96;
+
+% apply pre emmphasis
+s_emph = pre_emphasis_signal(s, pre_alpha);
+
+fprintf('--- Problem 3b: LPC Analysis with Pre-emphasis constant: alpha = %.2f  for Frame Size N=%d and Order P=%d ---\n',pre_alpha, frame_length, P);
+
+% --- 2. Call the generalized solver function  ---
+frames3b = extract_frames(s_emph, frame_length, frame_shift);
+
+% --- 3. Display Results ---
+% Display the full signal with markers 
+frame_fig_handle = plot_frames(s_emph, frames3b, frame_length, frame_shift, Fs);
+
+%  Save the frame figure
+figure_to_png(frame_fig_handle, 'problem3b_frames',relative_path_to_plots); 
+
+% Display individual frames in a grid 
+frame_grid_handle = plot_frame_grid(frames3b, Fs);
+
+%  Save the frame grid figure
+figure_to_png(frame_grid_handle, 'problem3b_frames_gird',relative_path_to_plots); 
+
+% --- 4. calculate autocorrelation  ---
+R_matrix3b = calculate_autocorr_frames(frames3b, P);
+
+% print it
+print_R_matrix(R_matrix3b);
+
+fprintf('--- Problem 3b: LPC (p=%d) Solution Verification ---\n',P);
+
+% --- 5. Call the generalized solver function  ---
+[A_matrix3b, E_vector3b,P3b] = lpc_matrix_solution(R_matrix3b);
+
+% --- 7. Display Results ---
+problem3b_fig_handle = print_lpc_matrix_results(frames3b, A_matrix3b, E_vector3b, R_matrix3b);
+
+%  Save the frame grid figure
+figure_to_png(problem3b_fig_handle, 'problem3b_sol',relative_path_to_plots); 
 
 %% --- Functions---
 % window generation function
@@ -527,7 +571,7 @@ function figHandle = print_lpc_matrix_results(X_frames, A_matrix, E_vector, R_ma
         sample_str = '';
         for i = 1:samples_to_print
             % Use %s.0f for integer-like samples
-            sample_str = [sample_str, sprintf('%d ', round(X_frames(k, i)))];
+            sample_str = [sample_str, sprintf('%.2f ', X_frames(k, i))];
         end
         if num_samples_per_frame > MAX_SAMPLES_TO_SHOW
             sample_str = [sample_str, '...'];
@@ -888,6 +932,39 @@ function R_matrix = calculate_autocorr_frames(frames, P)
         R_matrix(k, :) = autocorr_coeffs;
     end
     
+end
+%% --- Pre-empahsis signal  ---
+function s_emph = pre_emphasis_signal(s, alpha)
+%PRE_EMPHASIS_FILTER_SIGNAL Applies a first-order pre-emphasis filter to a signal.
+%
+%   s_emph = pre_emphasis_filter_signal(s, alpha) applies the pre-emphasis
+%   filter defined by H(z) = 1 - alpha*z^-1 to the input signal s.
+%   This is equivalent to the time-domain equation:
+%   s_emph[n] = s[n] - alpha * s[n-1]
+%
+% Inputs:
+%   s     - The input time-domain signal (vector).
+%   alpha - The pre-emphasis constant (e.g., 0.96 for speech analysis).
+%
+% Output:
+%   s_emph - The pre-emphasized output signal (vector).
+%
+% The first sample of the output signal is s_emph[1] = s[1] - alpha*s[0].
+% MATLAB's 'filter' function correctly handles the implied initial condition s[0]=0.
+
+    % Define the coefficients for the FIR filter H(z) = B(z) / A(z)
+    % B(z) is the numerator polynomial: B = [1, -alpha]
+    % A(z) is the denominator polynomial: A = [1]
+    B = [1, -alpha];
+    A = 1;
+
+    % Apply the filter using MATLAB's 'filter' function.
+    s_emph = filter(B, A, s);
+
+    %results 
+    fprintf('\n--- Problem 3b: LPC Analysis w/ Pre-emphasis (alpha=%.2f) ---\n', alpha);
+    fprintf('Original Signal s[n]: [%s]\n', num2str(s));
+    fprintf('Pre-emphasized s_emph[n]: [%s]\n', num2str(s_emph, 4));
 end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
