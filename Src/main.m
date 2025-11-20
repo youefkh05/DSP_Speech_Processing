@@ -60,7 +60,8 @@ problem2_fig_handle = print_lpc_matrix_results(frames, A_matrix2, E_vector2, R_m
 
 %  Save the frame grid figure
 figure_to_png(problem2_fig_handle, 'problem2_sol',relative_path_to_plots); 
-%}
+
+
 %% Problem 3 Frame Analysis based on given S data
 % Problem: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
 % --- 1. Define Input Data for Problem 3 ---
@@ -112,6 +113,12 @@ figure_to_png(problem3a_fig_handle, 'problem3a_sol',relative_path_to_plots);
 % --- 1. Define Input Data for Problem 3 ---
 % Signal: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
 % Pre-emphasis constant: alpha = 0.96
+s = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5];
+
+frame_length = 6; % Frame Size
+P = 2; % LPC Order
+overlap = 2;
+frame_shift = frame_length - overlap;
 pre_alpha = 0.96;
 
 % apply pre emmphasis
@@ -151,6 +158,10 @@ problem3b_fig_handle = print_lpc_matrix_results(frames3b, A_matrix3b, E_vector3b
 
 %  Save the frame grid figure
 figure_to_png(problem3b_fig_handle, 'problem3b_sol',relative_path_to_plots); 
+%}
+
+
+
 
 %% --- Functions---
 % window generation function
