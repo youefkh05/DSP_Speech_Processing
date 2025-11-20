@@ -1,7 +1,7 @@
 clear; 
 clc; 
 close all;
-
+%{
 %% Problem1 Analyze the frequency domain characteristics of Rectangular, Hanning, and Hamming windows.
 %% --- Parameters ---
 N = 1024;   % Window length (should be large, e.g., 512 or 1024, for good frequency resolution)
@@ -16,7 +16,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
-%{
+
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -37,7 +37,7 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
-%}
+
 %% Problem2 LPC Analysis based on given R data
 % --- 1. Define Input Data for Problem 2 ---
 
@@ -60,7 +60,7 @@ problem2_fig_handle = print_lpc_matrix_results(frames, A_matrix2, E_vector2, R_m
 
 %  Save the frame grid figure
 figure_to_png(problem2_fig_handle, 'problem2_sol',relative_path_to_plots); 
-
+%}
 %% Problem 3 Frame Analysis based on given S data
 % Problem: s[n] = [1, 4, 0, -4, -1, 2, 4, -1, 2, 5], Frame Size = 6, Overlap = 2, LPC Order P = 2.
 % --- 1. Define Input Data for Problem 3 ---
