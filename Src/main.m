@@ -16,7 +16,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
-%{
+
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -186,10 +186,10 @@ problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
 figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
 
 plot_BW_poles(Poles, Fs);
-%}
+
 %%  Problem 5: Recover Poles from A(z)
 A_coeffs_verify = [1.0, -4.9914283, 12.3717836, -19.81615903, 22.40030463,...
-    -18.3112730, 10.60283765, -3.99936958, 0.75965617]
+    -18.3112730, 10.60283765, -3.99936958, 0.75965617];
 Recovered_Poles = recover_poles_from_coeffs(A_coeffs_verify);
 
 % 1. Call the function to verify A_coeffs and H_mag
