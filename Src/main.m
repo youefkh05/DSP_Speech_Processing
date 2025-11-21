@@ -1,7 +1,8 @@
+%{
 clear; 
 clc; 
 close all;
-
+%}
 %% Problem1 Analyze the frequency domain characteristics of Rectangular, Hanning, and Hamming windows.
 %% --- Parameters ---
 N = 1024;   % Window length (should be large, e.g., 512 or 1024, for good frequency resolution)
@@ -16,7 +17,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
-%{
+
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -37,7 +38,7 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
-
+%{
 %% Problem2 LPC Analysis based on given R data
 % --- 1. Define Input Data for Problem 2 ---
 
@@ -180,15 +181,19 @@ function [W_Rec, W_Han, W_Ham, n] = generate_windows(N)
 
     % 1. Create time indices (0 to N-1)
     n = 0:N-1;
-    
+   
+
+
     % 2. Rectangular Window: WRec = 1
     W_Rec = ones(1, N);
     
     % 3. Hanning Window: WHan = 0.5 – 0.5 cos(2πn/N)
     W_Han = 0.5 - 0.5 * cos(2*pi*n/N);
+   
     
     % 4. Hamming Window: WHam = 0.54 – 0.46cos(2πn/N)
     W_Ham = 0.54 - 0.46 * cos(2*pi*n/N);
+
 
 end
 %% ---plot windows in time---
@@ -317,18 +322,21 @@ function [f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_shifted] = compute_freq_resp
     N = length(W_Rec);
     
     %% --- 1. Apply FFT and compute magnitude ---
-    fft_Rec = abs(fft(W_Rec));
-    fft_Han = abs(fft(W_Han));
-    fft_Ham = abs(fft(W_Ham));
+    fft_Rec = abs(fft(W_Rec,N));
+    fft_Han = abs(fft(W_Han,N));
+    fft_Ham = abs(fft(W_Ham,N));
+   
+
     
     %% --- 2. Normalize the magnitude spectrum so the peak is 0 dB ---
     % Normalization is done by dividing by the maximum value before taking log10
     % A small epsilon is added to avoid log(0) which produces -Inf
-    epsilon = 1e-15; 
+    epsilon = 1e-12; 
     
-    dB_Rec = 20 * log10(fft_Rec / (max(fft_Rec) + epsilon) + epsilon);
-    dB_Han = 20 * log10(fft_Han / (max(fft_Han) + epsilon) + epsilon);
-    dB_Ham = 20 * log10(fft_Ham / (max(fft_Ham) + epsilon) + epsilon);
+    dB_Rec = 20 * log10(fft_Rec + epsilon);
+    dB_Han = 20 * log10(fft_Han);
+    dB_Ham = 20 * log10(fft_Ham);
+
     
     %% --- 3. Shift the zero-frequency component to the center (DC at f=0) ---
     dB_Rec_shifted = fftshift(dB_Rec);
@@ -357,45 +365,34 @@ function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_s
 %   Output:
 %       fig: The handle of the created MATLAB figure.
 
-    % Define a magnitude floor (e.g., -80 dB) to clip -Inf and extremely small values for plotting clarity.
-    MAGNITUDE_FLOOR = -80; 
-    % Zoom limit: +/- Fs/16 (e.g., +/- 1000 Hz for Fs=16000)
-    X_LIMIT = Fs / 16; 
 
-    % Apply clipping to the dB values for better visualization
-    dB_Rec_clipped = max(dB_Rec_shifted, MAGNITUDE_FLOOR);
-    dB_Han_clipped = max(dB_Han_shifted, MAGNITUDE_FLOOR);
-    dB_Ham_clipped = max(dB_Ham_shifted, MAGNITUDE_FLOOR);
 
     % Create the figure and capture its handle
     fig = figure('Name', 'Window Functions in Frequency Domain');
     
     % --- Subplot 1: Rectangular Window ---
     subplot(3, 1, 1);
-    plot(f, dB_Rec_clipped, 'b', 'LineWidth', 1.5);
+    
+    plot(f, dB_Rec_shifted, 'b', 'LineWidth', 1.5);
     title('Rectangular Window Frequency Response ($W_{Rec}$)', 'Interpreter', 'latex');
     ylabel('Magnitude (dB)');
-    xlim([-X_LIMIT, X_LIMIT]); 
-    ylim([MAGNITUDE_FLOOR 0]);      
     grid on;
     
     % --- Subplot 2: Hanning Window ---
     subplot(3, 1, 2);
-    plot(f, dB_Han_clipped, 'r', 'LineWidth', 1.5);
+    plot(f, dB_Han_shifted, 'r', 'LineWidth', 1.5);
     title('Hanning Window Frequency Response ($W_{Han}$)', 'Interpreter', 'latex');
     ylabel('Magnitude (dB)');
-    xlim([-X_LIMIT, X_LIMIT]); 
-    ylim([MAGNITUDE_FLOOR 0]);      
+    xlim([-X_LIMIT, X_LIMIT]);    
     grid on;
     
     % --- Subplot 3: Hamming Window ---
     subplot(3, 1, 3);
-    plot(f, dB_Ham_clipped, 'g', 'LineWidth', 1.5);
+    plot(f, dB_Ham_shifted, 'g', 'LineWidth', 1.5);
     title('Hamming Window Frequency Response ($W_{Ham}$)', 'Interpreter', 'latex');
     xlabel('Frequency (Hz)');
     ylabel('Magnitude (dB)');
-    xlim([-X_LIMIT, X_LIMIT]); 
-    ylim([MAGNITUDE_FLOOR 0]);      
+    xlim([-X_LIMIT, X_LIMIT]);  
     grid on;
     
     % Adjust layout for better visualization
