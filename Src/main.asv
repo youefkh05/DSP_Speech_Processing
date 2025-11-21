@@ -178,14 +178,11 @@ Poles = [
 % --- Part a: Plot the magnitude spectrum in dB ---
 problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
 
+%  Save the frame grid figure
+figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
 
 % --- Part b: Estimate formants and bandwidths ---
 [Formants_Hz, Bandwidths_Hz] = estimate_and_plot_formants(Poles, Fs, H_mag);
-
-%  Save the magnitude spectrum figure
-figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
-
-fig_handle =plot_BW_poles(Poles, Fs);
 
 %% --- Functions---
 % window generation function
@@ -1177,10 +1174,10 @@ function fig_handle =plot_BW_poles(Poles, Fs)
                'Pole Angle (theta rad)', 'Formant F_i (Hz)', 'Bandwidth B_i (Hz)'};
 
     % Create Figure
-    fig_handle = figure('Name', 'Formant and Bandwidth Results Table', 'NumberTitle', 'off', 'Color', 'w');
+    figHandle = figure('Name', 'Formant and Bandwidth Results Table', 'NumberTitle', 'off', 'Color', 'w');
     
     % Create Uitable
-    u = uitable(fig_handle);
+    u = uitable(figHandle);
     u.Data = data_cell;
     u.ColumnName = headers;
     u.RowName = {}; % Hide row numbers
@@ -1197,10 +1194,8 @@ function fig_handle =plot_BW_poles(Poles, Fs)
     uicontrol('Style', 'text', 'String', title_str, ...
               'Units', 'normalized', 'Position', [0.1 0.95 0.8 0.05], ...
               'FontSize', 14, 'FontWeight', 'bold', 'BackgroundColor', 'w');
-
-    % Maximize the figure for better view if it has many columns
-    set(fig_handle, 'WindowState', 'maximized');
 end
+
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
 % FIGURE_TO_PNG Saves a specified MATLAB figure handle as a high-quality PNG file.
