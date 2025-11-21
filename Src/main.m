@@ -159,7 +159,7 @@ problem3b_fig_handle = print_lpc_matrix_results(frames3b, A_matrix3b, E_vector3b
 %  Save the frame grid figure
 figure_to_png(problem3b_fig_handle, 'problem3b_sol',relative_path_to_plots); 
 
-%}
+
 %% Problem 4: Formant and Bandwidth Estimation from All-Pole System
 % An 8th-order all-pole system modeled by 4 complex-conjugate pole pairs.
 % Given poles (4 complex-conjugate pairs)
@@ -186,7 +186,7 @@ problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
 figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
 
 plot_BW_poles(Poles, Fs);
-
+%}
 %%  Problem 5: Recover Poles from A(z)
 A_coeffs_verify = [1.0, -4.9914283, 12.3717836, -19.81615903, 22.40030463,...
     -18.3112730, 10.60283765, -3.99936958, 0.75965617]
