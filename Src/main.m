@@ -1,8 +1,8 @@
-%{
+
 clear; 
 clc; 
 close all;
-%}
+%{
 %% Problem1 Analyze the frequency domain characteristics of Rectangular, Hanning, and Hamming windows.
 %% --- Parameters ---
 N = 1024;   % Window length (should be large, e.g., 512 or 1024, for good frequency resolution)
@@ -38,7 +38,7 @@ freq_fig_handle = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ha
 
 % 3. Save the Frequency Domain figure
 figure_to_png(freq_fig_handle, 'problem1_freq_domain',relative_path_to_plots); 
-%{
+
 %% Problem2 LPC Analysis based on given R data
 % --- 1. Define Input Data for Problem 2 ---
 
@@ -365,7 +365,7 @@ function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_s
 %   Output:
 %       fig: The handle of the created MATLAB figure.
 
-
+    X_LIMIT = Fs/10;
 
     % Create the figure and capture its handle
     fig = figure('Name', 'Window Functions in Frequency Domain');
@@ -373,22 +373,23 @@ function fig = plot_freq_windows(Fs, f, dB_Rec_shifted, dB_Han_shifted, dB_Ham_s
     % --- Subplot 1: Rectangular Window ---
     subplot(3, 1, 1);
     
-    plot(f, dB_Rec_shifted, 'b', 'LineWidth', 1.5);
+    plot(f, dB_Rec_shifted, 'b');
     title('Rectangular Window Frequency Response ($W_{Rec}$)', 'Interpreter', 'latex');
     ylabel('Magnitude (dB)');
+    xlim([-X_LIMIT, X_LIMIT]);  
     grid on;
     
     % --- Subplot 2: Hanning Window ---
     subplot(3, 1, 2);
-    plot(f, dB_Han_shifted, 'r', 'LineWidth', 1.5);
+    plot(f, dB_Han_shifted, 'r');
     title('Hanning Window Frequency Response ($W_{Han}$)', 'Interpreter', 'latex');
     ylabel('Magnitude (dB)');
-    xlim([-X_LIMIT, X_LIMIT]);    
+    xlim([-X_LIMIT, X_LIMIT]);  
     grid on;
     
     % --- Subplot 3: Hamming Window ---
     subplot(3, 1, 3);
-    plot(f, dB_Ham_shifted, 'g', 'LineWidth', 1.5);
+    plot(f, dB_Ham_shifted, 'g');
     title('Hamming Window Frequency Response ($W_{Ham}$)', 'Interpreter', 'latex');
     xlabel('Frequency (Hz)');
     ylabel('Magnitude (dB)');
