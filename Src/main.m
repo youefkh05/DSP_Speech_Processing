@@ -158,8 +158,8 @@ problem3b_fig_handle = print_lpc_matrix_results(frames3b, A_matrix3b, E_vector3b
 
 %  Save the frame grid figure
 figure_to_png(problem3b_fig_handle, 'problem3b_sol',relative_path_to_plots); 
-%}
 
+%}
 %% Problem 4: Formant and Bandwidth Estimation from All-Pole System
 % An 8th-order all-pole system modeled by 4 complex-conjugate pole pairs.
 % Given poles (4 complex-conjugate pairs)
@@ -185,7 +185,27 @@ problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
 %  Save the magnitude spectrum figure
 figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
 
-fig_handle =plot_BW_poles(Poles, Fs);
+plot_BW_poles(Poles, Fs);
+
+%%  Problem 5: Recover Poles from A(z)
+A_coeffs_verify = [1.0, -4.9914283, 12.3717836, -19.81615903, 22.40030463,...
+    -18.3112730, 10.60283765, -3.99936958, 0.75965617]
+Recovered_Poles = recover_poles_from_coeffs(A_coeffs_verify);
+
+% 1. Call the function to verify A_coeffs and H_mag
+[Recovered_A_coeffs, Recovered_H_mag, Recovered_W] = calculate_all_pole_response(Recovered_Poles, Fs, N);
+
+% --- Part a: Plot the magnitude spectrum in dB ---
+problem4_fig_handle = plot_pole_spectrum(Fs, Recovered_W, Recovered_H_mag);
+
+% --- Estimate formants and bandwidths ---
+[Recovered_Formants_Hz, Recovered_Bandwidths_Hz] = estimate_and_plot_formants(Recovered_Poles, Fs, Recovered_H_mag);
+
+%  Save the magnitude spectrum figure
+figure_to_png(problem4_fig_handle, 'problem5_plot',relative_path_to_plots);
+
+fig_handle =plot_BW_poles(Recovered_Poles, Fs);
+
 
 %% --- Functions---
 % window generation function
@@ -1200,6 +1220,38 @@ function fig_handle =plot_BW_poles(Poles, Fs)
 
     % Maximize the figure for better view if it has many columns
     set(fig_handle, 'WindowState', 'maximized');
+end
+%% --- Recover Poles ---
+function Recovered_Poles = recover_poles_from_coeffs(A_coeffs)
+% RECOVER_POLES_FROM_COEFFS Calculates the roots (poles) of the denominator 
+% polynomial A(z) given its coefficients.
+%
+%   Input:
+%       A_coeffs: Array of the denominator coefficients 
+%                 A(z) = A(1) + A(2)*z^-1 + ... + A(N)*z^-(N-1), where A(1)=1.
+%
+%   Output:
+%       Recovered_Poles: Array of the system's poles.
+%
+% The MATLAB 'roots' function takes the polynomial coefficients and returns 
+% the roots (poles).
+
+    Recovered_Poles = roots(A_coeffs);
+
+    % Optional: Sort the poles for cleaner display, often by magnitude or angle
+    [~, sortIdx] = sort(angle(Recovered_Poles));
+    Recovered_Poles = Recovered_Poles(sortIdx);
+
+    fprintf('-----------------------------------------------------------\n');
+    fprintf('Problem 5: Recovered Poles from A(z) Coefficients\n');
+    fprintf('-----------------------------------------------------------\n');
+    fprintf('Coefficient Order N = %d (System Order = %d)\n', length(A_coeffs), length(A_coeffs)-1);
+    fprintf('Recovered Poles (Z-Plane Roots):\n');
+    for i = 1:length(Recovered_Poles)
+        p = Recovered_Poles(i);
+        fprintf('  p%d: %8.6f + %8.6f j\n', i, real(p), imag(p));
+    end
+    fprintf('-----------------------------------------------------------\n');
 end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
