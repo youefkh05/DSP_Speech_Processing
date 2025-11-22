@@ -1,6 +1,8 @@
+
 clear; 
 clc; 
 close all;
+
 
 %% -------------------------------------------------------------------------
 % Problem 7: Speaker Type Recognition (FIXED: k-NN on Mean+StdDev)
@@ -93,11 +95,17 @@ for i = 1:N_test
 end
 test_type_matrix = vertcat(test_type_features{:});
 
-% Normalize the aggregated features across the entire training set for k-NN
-mean_feats = mean(train_type_matrix, 1);
-std_feats = std(train_type_matrix, [], 1);
-train_type_matrix = (train_type_matrix - mean_feats) ./ (std_feats + 1e-8);
-test_type_matrix = (test_type_matrix - mean_feats) ./ (std_feats + 1e-8); % Apply training normalization to test data
+% Normalize the aggregated features across the entire training set for k-NN 
+mean_feats = mean(train_type_matrix, 1); 
+std_feats = std(train_type_matrix, [], 1); 
+
+train_type_matrix = (train_type_matrix - mean_feats) ./ (std_feats + 1e-8); 
+test_type_matrix = (test_type_matrix - mean_feats) ./ (std_feats + 1e-8); % Apply training normalization to test data 
+
+% ---- Save as .mat ----
+save('supervised_model_cache_multidba.mat', ...
+     'mean_feats', 'std_feats', ...
+     'train_type_matrix', 'test_type_matrix');
 
 
 %% ==================== PREDICTION LOOP (FIXED) =========================
@@ -131,7 +139,7 @@ else
         true_digit = test_digits{i};
         is_correct = (strcmp(pred_type{i}, true_type) && strcmp(pred_digit{i}, true_digit));
         
-        fprintf('Test %d/%d true(%s,%s) pred(%s,%s) %d\n', ...
+        fprintf('Test %d/%d test(%s,%s) pred(%s,%s) %d\n', ...
             i,N_test,true_type,true_digit,pred_type{i},pred_digit{i},is_correct);
     end
     
