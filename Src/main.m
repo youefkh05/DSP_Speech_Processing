@@ -306,7 +306,8 @@ figure_to_png(problem6_pitch_fig_handle,'pitch_track_comparison', plots_folder_p
     calculate_vocoder_error(x, y_basic, y_improved, y_residual);
 
 % plot error
-problem6_error_fig_handle = plot_vocoder_metrics_table(error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual);
+problem6_error_fig_handle = ...
+    plot_vocoder_metrics_table(error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual);
 
 % Save the figure
 figure_to_png(problem6_error_fig_handle, 'vocoder_performance_metrics_table', plots_folder_p6);
