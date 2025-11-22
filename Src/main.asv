@@ -158,7 +158,7 @@ problem3b_fig_handle = print_lpc_matrix_results(frames3b, A_matrix3b, E_vector3b
 
 %  Save the frame grid figure
 figure_to_png(problem3b_fig_handle, 'problem3b_sol',relative_path_to_plots); 
-%}
+
 
 %% Problem 4: Formant and Bandwidth Estimation from All-Pole System
 % An 8th-order all-pole system modeled by 4 complex-conjugate pole pairs.
@@ -186,26 +186,130 @@ problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
 figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
 
 plot_BW_poles(Poles, Fs);
-- 19.81615903z⁻³ + 22.40030463z⁻⁴ - 18.31127304z⁻⁵ +
-10.60283765z⁻⁶ - 3.99936958z⁻⁷ + 0.75965617z⁻⁸
+
 %%  Problem 5: Recover Poles from A(z)
-A_coeffs = [1.0, -4.9914283,	12.3717836,	- 19.81615903, 22.40030463, -18.3112730, 10.60283765,3.99936958]
-Recovered_Poles = recover_poles_from_coeffs(A_coeffs);
+A_coeffs_verify = [1.0, -4.9914283, 12.3717836, -19.81615903, 22.40030463,...
+    -18.3112730, 10.60283765, -3.99936958, 0.75965617];
+Recovered_Poles = recover_poles_from_coeffs(A_coeffs_verify);
 
 % 1. Call the function to verify A_coeffs and H_mag
-[Recovered_A_coeffs, Recovered_H_mag, W] = calculate_all_pole_response(Recovered_Poles, Fs, N);
+[Recovered_A_coeffs, Recovered_H_mag, Recovered_W] = calculate_all_pole_response(Recovered_Poles, Fs, N);
 
 % --- Part a: Plot the magnitude spectrum in dB ---
-problem4_fig_handle = plot_pole_spectrum(Fs, W, H_mag);
+problem4_fig_handle = plot_pole_spectrum(Fs, Recovered_W, Recovered_H_mag);
 
 % --- Estimate formants and bandwidths ---
-[Recovered_Formants_Hz, Recovered_Bandwidths_Hz] = estimate_and_plot_formants(Recovered_Poles, Fs, H_mag);
+[Recovered_Formants_Hz, Recovered_Bandwidths_Hz] = estimate_and_plot_formants(Recovered_Poles, Fs, Recovered_H_mag);
 
 %  Save the magnitude spectrum figure
-figure_to_png(problem4_fig_handle, 'problem4_plot',relative_path_to_plots);
+figure_to_png(problem4_fig_handle, 'problem5_plot',relative_path_to_plots);
 
 fig_handle =plot_BW_poles(Recovered_Poles, Fs);
+%}
 
+%% -------------------------------------------------------------------------
+%                               Problem 6
+%                  Speech Vocoder (Analysis + Synthesis)
+% -------------------------------------------------------------------------
+fprintf('\n--- Problem 6: Speech Vocoder (Analysis + Synthesis) ---\n');
+
+% Input and output relative paths (match your style)
+relative_audio_p6 = '..\Data\Problem 6\MyVoice.wav';
+results_folder_p6  = '..\Data\Problem 6\Results';
+plots_folder_p6    = fullfile(results_folder_p6, 'plot');
+
+% Create results folders if not exist
+current_file_path = mfilename('fullpath');
+current_dir = fileparts(current_file_path);
+full_results_dir = fullfile(current_dir, results_folder_p6);
+full_plots_dir   = fullfile(current_dir, plots_folder_p6);
+if ~exist(full_results_dir,'dir'), mkdir(full_results_dir); end
+if ~exist(full_plots_dir,'dir'), mkdir(full_plots_dir); end
+
+% Parameters (sensible defaults, tweakable)
+params.Fs_target = 16000;
+params.frame_ms = 30;
+params.hop_ms = 10;
+params.preemph = 0.97;
+params.lpc_order = 14;  % practical for 16kHz
+params.f0_min = 50;
+params.f0_max = 500;
+params.center_clip_pct = 0.6; % for center-clipping pitch (0..1)
+params.zcr_threshold = 0.15;
+params.acf_threshold = 0.35;
+
+% Read audio
+try
+    [x_raw, Fs_raw] = audioread(relative_audio_p6);
+catch ME
+    error('Cannot read audio. Make sure file exists at: %s\nError: %s', relative_audio_p6, ME.message);
+end
+if size(x_raw,2) > 1, x_raw = mean(x_raw,2); end
+% resample if needed
+if Fs_raw ~= params.Fs_target
+    x = resample(x_raw, params.Fs_target, Fs_raw);
+    Fs = params.Fs_target;
+else
+    x = x_raw;
+    Fs = Fs_raw;
+end
+x = x / max(abs(x)) * 0.98; % normalize
+audiowrite(fullfile(full_results_dir,'original_clean.wav'), x, Fs);
+
+% Preprocess: pre-emphasis, framing, windowing
+[frames, win, N, hop] = speech_preprocess(x, Fs, params);
+
+% Analysis: LPC, gain
+[LPCCoef, gain_vec] = speech_lpc_analysis(frames, params.lpc_order);
+
+% Pitch estimation: basic ACF + improved center-clipped ACF + cepstral fallback
+[f0_basic, acf_peak_basic]     = speech_pitch_estimation(frames, Fs, params, 'basic');
+[f0_cc,   acf_peak_cc]         = speech_pitch_estimation(frames, Fs, params, 'centerclip');
+[f0_cep,  cep_strength]        = speech_pitch_estimation(frames, Fs, params, 'cepstrum');
+
+% Voicing decision: combine energy, zcr, and center-clipped ACF strength
+voiced_basic  = speech_voicing_decision(frames, f0_basic, acf_peak_basic, params);
+voiced_improved = speech_voicing_decision(frames, f0_cc, acf_peak_cc, params);
+
+% Synthesis Basic (A): impulse train + noise, strict voiced_basic
+y_basic = speech_vocoder_synthesis_basic(LPCCoef, gain_vec, f0_basic, voiced_basic, win, hop, Fs, params);
+audiowrite(fullfile(full_results_dir,'vocoder_basic.wav'), y_basic./max(abs(y_basic))*0.98, Fs);
+
+% Synthesis Improved (B): center-clipped pitch + smoothed LPC + improved voicing
+% perform simple envelope smoothing of LPC across frames
+LPCCoef_smoothed = smooth_lpc_coeffs(LPCCoef, 3); % 3-frame median
+y_improved = speech_vocoder_synthesis_basic(LPCCoef_smoothed, gain_vec, f0_cc, voiced_improved, win, hop, Fs, params);
+audiowrite(fullfile(full_results_dir,'vocoder_improved.wav'), y_improved./max(abs(y_improved))*0.98, Fs);
+
+% Synthesis Residual (C): extract residual per frame and reuse/resample it (mixed excitation)
+y_residual = speech_vocoder_synthesis_residual(frames, LPCCoef, gain_vec, f0_cc, voiced_improved, win, hop, Fs, params);
+audiowrite(fullfile(full_results_dir,'vocoder_residual.wav'), y_residual./max(abs(y_residual))*0.98, Fs);
+
+% -------------------------------------------------------------------------
+% Plots: spectrograms and pitch track 
+% -------------------------------------------------------------------------
+
+problem6_spect_fig_handle =plot_vocoder_spectrograms(x, y_basic, y_improved, y_residual, Fs);
+
+% save the figure
+figure_to_png(problem6_spect_fig_handle, 'vocoder_spectrogram_comparison', plots_folder_p6);
+
+
+% Pitch track figure (plot f0_cc and voiced)
+problem6_pitch_fig_handle =plot_pitch_comparison(f0_basic, f0_cc, f0_cep, hop, Fs);
+
+% Save the figure
+figure_to_png(problem6_pitch_fig_handle,'pitch_track_comparison', plots_folder_p6);
+
+fprintf('Problem 6 finished. Outputs saved to: %s\n', full_results_dir);
+
+% calculate error
+[error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual] =...
+    calculate_vocoder_error(x, y_basic, y_improved, y_residual);
+% plot error
+fig = plot_vocoder_metrics_table(error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual)
+    % --- 3. Save the Figure ---
+    figure_to_png(fig, 'vocoder_performance_metrics_table', plots_folder);
 
 %% --- Functions---
 % window generation function
@@ -1252,6 +1356,515 @@ function Recovered_Poles = recover_poles_from_coeffs(A_coeffs)
         fprintf('  p%d: %8.6f + %8.6f j\n', i, real(p), imag(p));
     end
     fprintf('-----------------------------------------------------------\n');
+end
+%% --- Preprocess: pre-emphasis, framing, windowing ---
+function [frames, win, N, hop] = speech_preprocess(x, Fs, params)
+    N = round(params.frame_ms/1000 * Fs);
+    hop = round(params.hop_ms/1000 * Fs);
+    % pre-emphasis
+    x_pre = filter([1 -params.preemph],1,x);
+    % zero-pad and frame (use your extract_frames style: frames as rows)
+    frames = extract_frames(x_pre, N, hop);
+    % window vector (Hamming)
+    win = hamming(N).';
+    % apply window to each row
+    for k=1:size(frames,1)
+        frames(k,:) = frames(k,:) .* win;
+    end
+end
+%% --- Analysis: LPC, gain ---
+function [LPCCoef, gain] = speech_lpc_analysis(frames, p)
+
+    K = size(frames,1);
+    LPCCoef = zeros(p+1, K);
+    gain = zeros(1,K);
+
+    for k = 1:K
+        fr = frames(k,:)';
+
+        % --- 1) LPC estimation (with fallback)
+        a = lpc(fr, p);   % returns row vector [1 a1 .. ap]
+
+        % if LPC produced NaN/Inf → fallback to unity filter
+        if any(~isfinite(a))
+            a = [1, zeros(1,p)];
+        end
+
+        LPCCoef(:,k) = a(:);
+
+        % --- 2) Residual calculation (safe)
+        resid = filter(a, 1, fr);
+
+        % Replace any NaN or Inf inside residual
+        if any(~isfinite(resid))
+            resid = zeros(size(resid));
+        end
+
+        % --- 3) Compute gain safely
+        g = mean(resid.^2);
+
+        if ~isfinite(g) || g < 1e-12
+            g = 1e-12;  % minimal gain
+        end
+
+        gain(k) = sqrt(g);
+    end
+end
+
+%% --- Pitch estimation ---
+function [f0, peak_strength] = speech_pitch_estimation(frames, Fs, params, mode)
+    K = size(frames,1);
+    f0 = zeros(1,K);
+    peak_strength = zeros(1,K);
+    lag_min = floor(Fs/params.f0_max);
+    lag_max = ceil(Fs/params.f0_min);
+    for k=1:K
+        fr = frames(k,:);
+        % energy check
+        if sum(fr.^2) < 1e-6
+            f0(k)=0; peak_strength(k)=0; continue;
+        end
+        switch lower(mode)
+            case 'basic'
+                acf = xcorr(fr);
+                mid = ceil(length(acf)/2);
+                acf_pos = acf(mid+lag_min:mid+lag_max);
+                [val, idx] = max(acf_pos);
+                lag = idx + lag_min -1;
+                r0 = acf(mid);
+                if r0>0, norm_acf = val / r0; else norm_acf=0; end
+                f0(k) = Fs/lag;
+                peak_strength(k) = norm_acf;
+            case 'centerclip'
+                clip_thr = params.center_clip_pct * max(abs(fr));
+                fr_cc = fr;
+                fr_cc(fr > clip_thr) = fr_cc(fr > clip_thr) - clip_thr;
+                fr_cc(fr < -clip_thr) = fr_cc(fr < -clip_thr) + clip_thr;
+                fr_cc(abs(fr_cc) <= 0) = 0;
+                acf = xcorr(fr_cc);
+                mid = ceil(length(acf)/2);
+                acf_pos = acf(mid+lag_min:mid+lag_max);
+                [val, idx] = max(acf_pos);
+                lag = idx + lag_min -1;
+                r0 = acf(mid);
+                if r0>0, norm_acf = val / r0; else norm_acf=0; end
+                f0(k) = Fs/lag;
+                peak_strength(k) = norm_acf;
+            case 'cepstrum'
+                % cepstral method (liftered)
+                spec = fft(fr .* hamming(length(fr))', 2048);
+                logmag = log(abs(spec)+eps);
+                cep = ifft(logmag);
+                % lifter range corresponds to pitch period between f0min..f0max
+                qmin = floor(Fs/params.f0_max);
+                qmax = ceil(Fs/params.f0_min);
+                [val, idx] = max(abs(cep(qmin:qmax)));
+                quef = idx + qmin -1;
+                f0(k) = Fs/quef;
+                peak_strength(k) = val / max(abs(cep)); 
+            otherwise
+                error('Unknown pitch mode %s',mode);
+        end
+        % limit f0 to sensible range
+        if f0(k) < params.f0_min || f0(k) > params.f0_max
+            f0(k) = 0;
+            peak_strength(k)=0;
+        end
+    end
+end
+%% --- Voicing decision ---
+function voiced = speech_voicing_decision(frames, f0_vec, acf_strength, params)
+    K = size(frames,1);
+    voiced = false(1,K);
+    for k=1:K
+        fr = frames(k,:);
+        energy = sum(fr.^2);
+        zcr = sum(abs(diff(fr>0))) / (2*length(fr));
+        if f0_vec(k) > 0 && acf_strength(k) > params.acf_threshold && energy > 1e-6 && zcr < params.zcr_threshold
+            voiced(k) = true;
+        else
+            voiced(k) = false;
+        end
+    end
+end
+%% --- Speech Generation ---
+function exc = speech_generate_excitation(N, f0, voiced, gain, Fs, mode, resid_frame)
+    if nargin<7, resid_frame = []; end
+    exc = zeros(N,1);
+    if voiced
+        if f0>0
+            T0 = round(Fs / f0);
+            pos = 1;
+            while pos <= N
+                exc(pos) = 1;
+                pos = pos + T0;
+            end
+        else
+            exc = randn(N,1);
+        end
+        exc = exc * (gain + eps);
+    else
+        exc = randn(N,1) * (gain + eps);
+    end
+    % if residual provided and mode=='residual', use resid_frame shaped
+    if nargin>=7 && ~isempty(resid_frame) && strcmp(mode,'residual')
+        % resid_frame expected column vector length N
+        exc = resid_frame(:) .* (gain + eps);
+    end
+end
+%% --- Synthesis Basic ---
+function y = speech_vocoder_synthesis_basic(LPCCoef, gain_vec, f0_vec, voiced_vec, win, hop, Fs, params)
+    K = size(LPCCoef,2);
+    N = length(win);
+    outlen = (K-1)*hop + N;
+    y = zeros(outlen,1);
+    for k=1:K
+        a_k = LPCCoef(:,k);
+        exc = speech_generate_excitation(N, f0_vec(k), voiced_vec(k), gain_vec(k), Fs, 'impulse', []);
+        synth_frame = filter(1, a_k, exc);  % synth by 1/A(z)
+        idx = (1:N) + (k-1)*hop;
+        y(idx) = y(idx) + (synth_frame .* win.');
+    end
+    % de-emphasis inverse
+    y = filter(1, [1 -params.preemph], y);
+end
+%% --- Synthesis Residual --- 
+function y = speech_vocoder_synthesis_residual(frames, LPCCoef, gain_vec, f0_vec, voiced_vec, win, hop, Fs, params)
+    K = size(frames,1);
+    N = length(win);
+    outlen = (K-1)*hop + N;
+    y = zeros(outlen,1);
+    for k=1:K
+        a_k = LPCCoef(:,k);
+        % compute residual of the original windowed frame (inverse filter)
+        fr = frames(k,:)';
+        resid = filter(a_k,1,fr);  % residual = a(z)*frame
+        % for voiced frames: pick a pitch-synchronous chunk of resid and replicate
+        if voiced_vec(k) && f0_vec(k)>0
+            T0 = round(Fs / f0_vec(k));
+            % pick first T0 samples of residual (or center region)
+            if T0 < 1, T0=1; end
+            seg = resid(1:min(length(resid),T0));
+            % build exc by tiling seg (with simple tapering)
+            exc = zeros(N,1);
+            pos = 1;
+            while pos <= N
+                L = min(length(seg), N-pos+1);
+                exc(pos:pos+L-1) = exc(pos:pos+L-1) + seg(1:L);
+                pos = pos + T0;
+            end
+            % small envelope to avoid discontinuities
+            exc = exc .* hann_window_for_length(N);
+            exc = exc * (gain_vec(k) + eps);
+        else
+            % unvoiced -> filtered noise shaped by LPC envelope (use inverse filter on noise)
+            noise = randn(N,1) * (gain_vec(k)+eps);
+            exc = noise;
+        end
+        % synth
+        synth_frame = filter(1, a_k, exc);
+        idx = (1:N) + (k-1)*hop;
+        y(idx) = y(idx) + (synth_frame .* win.');
+    end
+    % de-emphasis inverse
+    y = filter(1, [1 -params.preemph], y);
+end
+
+function w = hann_window_for_length(N)
+    % small helper to create a tapered window matching synthesis windowing
+    if N<=2
+        w = ones(N,1);
+    else
+        w = hann(N);
+        w = w(:);
+    end
+end
+%% --- Smooth LPC ---
+function LPCCoef_smoothed = smooth_lpc_coeffs(LPCCoef, window_len)
+    [P1, K] = size(LPCCoef);
+    LPCCoef_smoothed = LPCCoef;
+    half = floor(window_len/2);
+    for n=1:K
+        L = max(1, n-half); R = min(K, n+half);
+        LPCCoef_smoothed(:,n) = median(LPCCoef(:,L:R), 2);
+    end
+end
+%% --- Plot  spectrograms ---
+function fig =plot_vocoder_spectrograms(x, y_basic, y_improved, y_residual, Fs)
+% PLOT_VOCODER_SPECTROGRAMS Creates a single figure with 4 subplots 
+% showing the spectrograms of the original signal and the three vocoded 
+% outputs.
+%
+% Inputs:
+%   x           : Original signal
+%   y_basic     : Basic Vocoder synthesized signal (Pulse/Noise)
+%   y_improved  : Improved Vocoder synthesized signal (e.g., Smoothed LPC)
+%   y_residual  : Residual Vocoder synthesized signal (AbS Residual)
+%   Fs          : Sampling frequency
+%   plots_folder: Directory path where the final figure will be saved.
+
+    % Spectrogram parameters
+    frame_len = round(0.03 * Fs); % 30 ms window
+    overlap = round(0.02 * Fs);   % 20 ms overlap (10 ms hop)
+    N_fft = 1024;                 % FFT points
+
+    fig = figure('Name', 'Vocoder Spectrogram Comparison', 'Units', 'normalized', 'Position', [0.1 0.1 0.7 0.8]);
+
+    % --- Subplot 1: Original Spectrogram ---
+    subplot(4, 1, 1);
+    spectrogram(x, frame_len, overlap, N_fft, Fs, 'yaxis');
+    title('1. Original Signal Spectrogram');
+    
+    % --- Subplot 2: Basic Vocoder Spectrogram (Pulse/Noise) ---
+    subplot(4, 1, 2);
+    spectrogram(y_basic, frame_len, overlap, N_fft, Fs, 'yaxis');
+    title('2. Basic Vocoder (Pulse/Noise Excitation)');
+
+    % --- Subplot 3: Improved Vocoder Spectrogram (e.g., Smoothed LPC) ---
+    subplot(4, 1, 3);
+    spectrogram(y_improved, frame_len, overlap, N_fft, Fs, 'yaxis');
+    title('3. Improved Vocoder (Smoothed LPC Coefficients)');
+
+    % --- Subplot 4: Residual Vocoder Spectrogram (Analysis-by-Synthesis Residual) ---
+    subplot(4, 1, 4);
+    spectrogram(y_residual, frame_len, overlap, N_fft, Fs, 'yaxis');
+    title('4. Residual Vocoder (Analysis-by-Synthesis Residual)');
+    
+    % Link X-axes (Time axes) for easier comparison
+    linkaxes(findobj(fig, 'Type', 'Axes'), 'x');
+    
+    % Add a global title for the entire figure
+    sgtitle('LPC Vocoder Synthesis Method Comparison');
+
+end
+%% --- Plot Pitch ---
+function fig =plot_pitch_comparison(f0_basic, f0_cc, f0_cep, hop, Fs)
+% PLOT_PITCH_COMPARISON Creates a single figure plotting F0 estimates from
+% three different methods (Basic ACF, Center-Clip ACF, and Cepstrum).
+%
+% Inputs:
+%   f0_basic    : F0 estimates from basic ACF (vector)
+%   f0_cc       : F0 estimates from center-clip ACF (vector)
+%   f0_cep      : F0 estimates from cepstrum method (vector)
+%   hop         : Hop size in samples
+%   Fs          : Sampling frequency
+%   plots_folder: Directory path where the final figure will be saved.
+    
+    % Ensure all F0 vectors have the same length (should be equal to K, number of frames)
+    K = length(f0_basic);
+    
+    % Calculate the time vector corresponding to the center of each frame
+    % t_frames starts at time 0 and increases by hop/Fs for each frame
+    t_frames = (0:K-1) * hop / Fs;
+ fig = figure('Name','Pitch Track Comparison', 'Units', 'normalized', 'Position', [0.1 0.1 0.8 0.7]);
+    
+    % Combine all F0 data, removing NaN and non-positive values to determine 
+    % a sensible dynamic range for the voiced segments.
+    all_f0 = [f0_basic(:); f0_cc(:); f0_cep(:)];
+    valid_f0 = all_f0(all_f0 > 0 & isfinite(all_f0));
+    
+    % Determine the common Y-axis limits
+    if isempty(valid_f0)
+        % Case 1: No voiced segments found (all F0s <= 0 or NaN)
+        min_f0 = 0;
+        max_f0 = 250; % Default typical F0 range for male speech
+    else
+        % Case 2: Voiced segments exist
+        min_f0 = min(valid_f0);
+        max_f0 = max(valid_f0);
+    end
+    
+    % Set the final Y-axis range, ensuring it's slightly padded and always increasing
+    % Ensure the lower bound is at least 0.
+    y_min = max(0, min_f0 * 0.95 - 5);
+    y_max = max_f0 * 1.05 + 5;
+    
+    % Final check: If y_max is not greater than y_min, enforce a default range
+    if y_max <= y_min + 5
+         y_min = 0;
+         y_max = 250;
+    end
+    
+    ylim_range = [y_min, y_max];
+    
+    % --- Subplot 1: Basic ACF Pitch Track ---
+    subplot(3, 1, 1);
+    plot(t_frames, f0_basic, 'b', 'LineWidth', 1.5); hold on;
+    yline(0,'k:');
+    title('1. Basic ACF F0 Estimate'); 
+    ylabel('F0 (Hz)');
+    ylim(ylim_range);
+    grid on;
+
+    % --- Subplot 2: Center-Clip ACF Pitch Track ---
+    subplot(3, 1, 2);
+    plot(t_frames, f0_cc, 'r', 'LineWidth', 1.5); hold on;
+    yline(0,'k:');
+    title('2. Center-Clip ACF F0 Estimate'); 
+    ylabel('F0 (Hz)');
+    ylim(ylim_range);
+    grid on;
+
+    % --- Subplot 3: Cepstrum Pitch Track ---
+    subplot(3, 1, 3);
+    plot(t_frames, f0_cep, 'k', 'LineWidth', 1.5); hold on;
+    yline(0,'k:');
+    title('3. Cepstrum F0 Estimate'); 
+    xlabel('Time (s)');
+    ylabel('F0 (Hz)');
+    ylim(ylim_range);
+    grid on;
+    
+    % Link X-axes (Time axes) for easier comparison
+    linkaxes(findobj(fig, 'Type', 'Axes'), 'x');
+    
+    % Add a global title for the entire figure
+    sgtitle('Comparison of Fundamental Frequency (F0) Estimation Methods');
+   
+end
+%% --- VOcoder Error ---
+function [error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual] ...
+    = calculate_vocoder_error(x, y_basic, y_improved, y_residual)
+% CALCULATE_VOCODER_ERROR Computes the reconstruction error metrics 
+% (Normalized Root Mean Square Error - NRMSE) between the original signal (x) 
+% and the three synthesized signals (y_basic, y_improved, y_residual).
+%
+% The function pads the original signal 'x' to match the length of the 
+% longest synthesized signal, as typically the synthesized signal is longer 
+% due to OLA and framing.
+%
+% Inputs:
+%   x           : Original signal (vector)
+%   y_basic     : Basic Vocoder output (vector)
+%   y_improved  : Improved Vocoder output (vector)
+%   y_residual  : Residual Vocoder output (vector)
+%
+% Outputs (Error % based on NRMSE):
+%   error_basic    : NRMSE (%) for y_basic
+%   error_improved : NRMSE (%) for y_improved
+%   error_residual : NRMSE (%) for y_residual
+%   SDR_basic      : Signal Distortion Ratio (dB) for y_basic
+%   SDR_improved   : Signal Distortion Ratio (dB) for y_improved
+%   SDR_residual   : Signal Distortion Ratio (dB) for y_residual
+
+    % Ensure all inputs are column vectors
+    x = x(:);
+    y_basic = y_basic(:);
+    y_improved = y_improved(:);
+    y_residual = y_residual(:);
+    
+    L_x = length(x);
+    L_basic = length(y_basic);
+    L_improved = length(y_improved);
+    L_residual = length(y_residual);
+    
+    % Find the maximum length required
+    L_max = max([L_x, L_basic, L_improved, L_residual]);
+    
+    % --- 1. Pad Original Signal (x) ---
+    if L_max > L_x
+        padding_amount = L_max - L_x;
+        x_padded = [x; zeros(padding_amount, 1)];
+    else
+        % If x is longer (unlikely for vocoder), truncate it to L_max
+        x_padded = x(1:L_max);
+    end
+    
+    % --- 2. Truncate Synthesized Signals if necessary (shouldn't happen 
+    % if L_max came from one of them, but good for safety)
+    y_basic_sync = y_basic(1:L_max);
+    y_improved_sync = y_improved(1:L_max);
+    y_residual_sync = y_residual(1:L_max);
+    
+    
+    % --- 3. Define Metric Function ---
+    
+    % Calculation Function (using NRMSE and SDR)
+    % NRMSE (%) = ||x - y||_2 / ||x||_2 * 100%
+    % SDR (dB) = 10 * log10( ||x||_2^2 / ||x - y||_2^2 )
+    
+    function [nrmse_pct, sdr_db] = calculate_metrics(ref_sig, test_sig)
+        % Energy of the reference signal (Original)
+        P_sig = sum(ref_sig.^2); 
+        
+        % Energy of the error signal (Noise)
+        err_sig = ref_sig - test_sig;
+        P_err = sum(err_sig.^2);
+        
+        if P_sig < eps % Handle near-zero energy (division by zero risk)
+            nrmse_pct = 100;
+            sdr_db = -Inf;
+        else
+            % Normalized Root Mean Square Error (NRMSE)
+            nrmse_pct = sqrt(P_err) / sqrt(P_sig) * 100;
+            
+            % Signal Distortion Ratio (SDR) in dB
+            sdr_db = 10 * log10(P_sig / P_err);
+        end
+    end
+    
+    % --- 4. Calculate Metrics for each vocoder ---
+    
+    [error_basic, SDR_basic] = calculate_metrics(x_padded, y_basic_sync);
+    [error_improved, SDR_improved] = calculate_metrics(x_padded, y_improved_sync);
+    [error_residual, SDR_residual] = calculate_metrics(x_padded, y_residual_sync);
+
+end
+%% --- Plot VOcoder Error ---
+function fig =plot_vocoder_metrics_table(error_basic, error_improved, error_residual, SDR_basic, SDR_improved, SDR_residual)
+% PLOT_VOCODER_METRICS_TABLE Generates a figure containing a table of 
+% vocoder reconstruction error metrics (NRMSE and SDR).
+%
+% Inputs:
+%   error_basic    : NRMSE (%) for Basic Vocoder
+%   error_improved : NRMSE (%) for Improved Vocoder
+%   error_residual : NRMSE (%) for Residual Vocoder
+%   SDR_basic      : SDR (dB) for Basic Vocoder
+%   SDR_improved   : SDR (dB) for Improved Vocoder
+%   SDR_residual   : SDR (dB) for Residual Vocoder
+%   plots_folder   : Directory path where the final figure will be saved.
+
+    % --- 1. Prepare Data for Table ---
+    
+    % Data Rows: Basic, Improved, Residual
+    table_data = [...
+        error_basic, SDR_basic;
+        error_improved, SDR_improved;
+        error_residual, SDR_residual];
+    
+    % Column Names
+    column_names = {'Error Percentage (NRMSE %)', 'Signal Distortion Ratio (SDR dB)'};
+    
+    % Row Names (Vocoder Methods)
+    row_names = {'Basic Vocoder (Pulse/Noise)', ...
+                 'Improved Vocoder (Smoothed LPC)', ...
+                 'Residual Vocoder (AbS Residual)'};
+
+    % --- 2. Create Figure and Table ---
+    
+    fig = figure('Name', 'Vocoder Performance Metrics', 'Units', 'normalized', 'Position', [0.3 0.3 0.4 0.3]);
+    
+    % Create a MATLAB uitable object
+    t = uitable(fig, ...
+        'Data', table_data, ...
+        'ColumnName', column_names, ...
+        'RowName', row_names, ...
+        'Units', 'normalized', ...
+        'Position', [0 0 1 1], ... % Table fills the entire figure
+        'FontName', 'Consolas', ...
+        'FontSize', 12, ...
+        'ColumnFormat', {'numeric', 'numeric'}, ...
+        'ColumnWidth', {'auto', 'auto'}, ...
+        'Tag', 'MetricsTable');
+
+    % Set precision for display
+    t.Data = round(t.Data, 3);
+    
+    % Add a title (optional, can also use sgtitle or annotation if preferred)
+    annotation('textbox', [0.1 0.85 0.8 0.1], 'String', 'Vocoder Reconstruction Performance Metrics', ...
+        'FontSize', 14, 'FontWeight', 'bold', 'EdgeColor', 'none', 'HorizontalAlignment', 'center');
+
+
 end
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
