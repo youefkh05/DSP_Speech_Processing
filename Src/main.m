@@ -6,7 +6,7 @@ close all;
 %% --- Parameters ---
 N = 1024;   % Window length (should be large, e.g., 512 or 1024, for good frequency resolution)
 % Define the relative path to the audio file
-relative_audio_path = '..\Data\Test\C02n_1.wav'; 
+relative_audio_path = '..\Data\Test\C\C02n_1.wav'; 
 relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from Src to the target folder
 
 % Extract info
@@ -205,7 +205,7 @@ problem4_fig_handle = plot_pole_spectrum(Fs, Recovered_W, Recovered_H_mag);
 figure_to_png(problem4_fig_handle, 'problem5_plot',relative_path_to_plots);
 
 fig_handle =plot_BW_poles(Recovered_Poles, Fs);
-%}
+
 
 %% -------------------------------------------------------------------------
 %                               Problem 6
@@ -313,6 +313,206 @@ problem6_error_fig_handle = ...
 figure_to_png(problem6_error_fig_handle, 'vocoder_performance_metrics_table', plots_folder_p6);
 
 fprintf('Problem 6 finished. Outputs saved to: %s\n', full_results_dir);
+%}
+
+%% -------------------------------------------------------------------------
+% Problem 7: Speech Digit + Speaker-Type Recognition (MFCC + DTW)
+% -------------------------------------------------------------------------
+
+
+% ================= PATHS ====================
+TRAIN_DIR = '..\Data\Train';
+TEST_DIR  = '..\DSP_Speech_Processing\Data\Test';
+
+RESULTS_DIR = fullfile(fileparts(TRAIN_DIR), 'Results', 'Problem7');
+PLOT_DIR = fullfile(RESULTS_DIR, 'plot');
+
+if ~exist(RESULTS_DIR,'dir'), mkdir(RESULTS_DIR); end
+if ~exist(PLOT_DIR,'dir'), mkdir(PLOT_DIR); end
+
+% ================= MFCC PARAMETERS ====================
+params.fs_target = 16000;
+params.frame_ms = 25;
+params.hop_ms = 10;
+params.num_ceps = 13;
+params.use_delta = true;
+params.normalize = true;
+
+% Supervised Parameters
+KNN_K_TYPE = 5;   % K for k-NN speaker type classifier (on mean MFCC)
+KNN_K_DIGIT = 1;  % K for DTW-based digit classifier (1-NN is common for DTW)
+
+dtw_opts.use_builtin = exist('dtw','file') ~= 0;
+
+% ================= LABEL SETS ====================
+TYPE_LIST  = {'C','M','F','U'};     % Speaker categories
+DIGIT_LIST = {'0','1','2','3','4','5','6','7','8','9'};
+
+% ================= LOAD TRAIN SET (with caching) ====================
+train_cache = fullfile(RESULTS_DIR, 'train_mfcc_cache.mat');
+
+if exist(train_cache, 'file')
+    fprintf("\nLoading TRAIN MFCC cache...\n");
+    S = load(train_cache);
+    train_feats  = S.train_feats;
+    train_types  = S.train_types;
+    train_digits = S.train_digits;
+
+else
+    fprintf("\nExtracting MFCC for TRAIN set (no cache found)...\n");
+    [train_feats, train_types, train_digits] = load_dataset(TRAIN_DIR, params);
+
+    fprintf("Saving TRAIN MFCC cache...\n");
+    save(train_cache, 'train_feats', 'train_types', 'train_digits', '-v7.3');
+end
+
+
+% ================= LOAD TEST SET (with caching) ====================
+
+% Load test MFCCs
+% CONSOLIDATED BLOCK: Loads data into test_feats, test_types, test_digits
+test_cache = fullfile(RESULTS_DIR, 'test_mfcc_cache.mat');
+
+if exist(test_cache, 'file')
+    fprintf("\nLoading TEST MFCC cache...\n");
+    S = load(test_cache);
+    test_feats  = S.test_feats;
+    test_types  = S.test_types;
+    test_digits = S.test_digits;
+    
+else
+    fprintf("\nExtracting MFCC for TEST set (no cache found)...\n");
+    [test_feats, test_types, test_digits] = load_dataset(TEST_DIR, params);
+
+    fprintf("Saving TEST MFCC cache...\n");
+    save(test_cache, 'test_feats', 'test_types', 'test_digits', '-v7.3');
+end
+% ================= CLASSIFIER TRAINING/PREPARATION (DTW Templates) ====================
+
+% Model cache file path
+model_cache = fullfile(RESULTS_DIR, 'supervised_model_cache.mat');
+
+% Check if cached model exists
+if exist(model_cache, 'file')
+    fprintf('\nLoading SUPERVISED model cache...\n');
+    S = load(model_cache);
+    train_feats = S.train_feats;
+    train_digits = S.train_digits;
+    train_types = S.train_types;
+    type_templates = S.type_templates;  % DTW-based templates
+else
+    fprintf('\nComputing DTW-based templates for speaker types...\n');
+    types = {'C','M','F','U'};
+    type_templates = cell(numel(types), 1);
+
+    for t = 1:numel(types)
+        idx_type = strcmp(train_types, types{t});
+        seqs = train_feats(idx_type);
+        
+        % Compute DTW Barycenter Average (DBA) template
+        type_templates{t} = compute_dba(seqs, 10); % 10 iterations
+    end
+    
+    % Save everything for future use
+    fprintf('Saving SUPERVISED model cache with DTW templates...\n');
+    save(model_cache, 'train_feats', 'train_types', 'train_digits', 'type_templates', '-v7.3');
+end
+
+fprintf('\nDTW-template classifier for Speaker Type ready.\n');
+fprintf('DTW classifier for Digits ready (K=%d).\n', KNN_K_DIGIT);
+
+% ==================== PREDICTION ====================
+results_file = fullfile(RESULTS_DIR, 'predictions.mat');
+
+if exist(results_file, 'file')
+    fprintf('Predictions file already exists: %s\nSkipping prediction.\n', results_file);
+    
+    % Load existing predictions
+    S = load(results_file);
+    test_types_str  = S.test_types_str;
+    pred_type_str   = S.pred_type_str;
+    test_digits_str = S.test_digits_str;
+    pred_digit_str  = S.pred_digit_str;
+    
+else
+    Ntest = numel(test_feats);
+    pred_type  = cell(Ntest,1);
+    pred_digit = cell(Ntest,1);
+
+    fprintf("Starting SUPERVISED prediction on %d test samples...\n", Ntest);
+
+    for i = 1:Ntest
+        mfcc_test = test_feats{i};
+
+        % --- 1. Predict Speaker Type using DTW templates ---
+        min_d = inf;
+        for t = 1:numel(type_templates)
+            template = type_templates{t};
+            d = dtw_distance_supervised(mfcc_test', template');  % existing DTW function
+            if d < min_d
+                min_d = d;
+                pred_type{i} = TYPE_LIST(t);
+            end
+        end
+
+        % --- 2. Predict Digit (DTW on full MFCC sequences) ---
+        pred_digit{i} = dtw_classify(mfcc_test, train_feats, train_digits);
+
+        % --- 3. Print Status ---
+        true_type = test_types{i};
+        true_digit = test_digits{i};
+
+        is_correct = (strcmp(pred_type{i}, true_type) && strcmp(pred_digit{i}, true_digit));
+        status = char(string(is_correct));
+
+        fprintf('Test %d/%d true(%s,%s) predict(%s,%s) %s\n', ...
+            i, Ntest, ...
+            string(true_type), string(true_digit), ...
+            string(pred_type{i}), string(pred_digit{i}), ...
+            status);
+    end
+
+    fprintf("Prediction complete. Generating confusion matrices and saving results...\n");
+
+    % --- Convert final cell arrays to string arrays ---
+    test_types_str  = string(test_types);
+    pred_type_str   = string(pred_type);
+    test_digits_str = string(test_digits);
+    pred_digit_str  = string(pred_digit);
+
+    % --- Save to .mat ---
+    save(results_file, 'test_types_str', 'pred_type_str', 'test_digits_str', 'pred_digit_str');
+    fprintf('Prediction results saved to %s\n', results_file);
+end
+
+
+
+% --- Confusion matrices ---
+
+% ---- Type Confusion (k-NN) ----
+fig1 = figure('Name', 'Speaker Type Recognition (k-NN)');
+confusionchart(categorical(test_types_str), categorical(pred_type_str));
+title("Speaker Type Recognition (k-NN Classification, K=" + KNN_K_TYPE + ")");
+saveas(fig1, fullfile(PLOT_DIR, "type_confusion_knn.png"));
+
+% ---- Digit Confusion (DTW) ----
+fig2 = figure('Name', 'Digit Recognition (DTW)');
+confusionchart(categorical(test_digits_str), categorical(pred_digit_str));
+title("Digit Recognition (DTW Classification)");
+saveas(fig2, fullfile(PLOT_DIR, "digit_confusion_dtw.png"));
+
+% --- Summary Table ---
+% If predictions were loaded
+Ntest = numel(test_types_str);  % number of test samples
+
+% Use string arrays for plotting
+fig3 = plot_type_analysis(Ntest, pred_type_str, test_types_str);
+saveas(fig3, fullfile(PLOT_DIR, "type_summary_table_dtw.png"));
+fprintf("Speaker type summary table saved to: %s\n", fullfile(PLOT_DIR, "type_summary_table_dtw.png"));
+
+% Optional: reusable figure handle function
+type_fig_handle = plot_type_analysis(Ntest, pred_type_str, test_types_str);
+figure_to_png(type_fig_handle, 'Per-Type Recognition Performance', RESULTS_DIR);
 
 
 
@@ -1415,7 +1615,6 @@ function [LPCCoef, gain] = speech_lpc_analysis(frames, p)
         gain(k) = sqrt(g);
     end
 end
-
 %% --- Pitch estimation ---
 function [f0, peak_strength] = speech_pitch_estimation(frames, Fs, params, mode)
     K = size(frames,1);
@@ -1885,6 +2084,403 @@ function fig =plot_vocoder_metrics_table(error_basic, error_improved, error_resi
 
 
 end
+%% --- Dataset Loader ---
+function [feats, types, digits] = load_dataset(dirpath, params)
+files = dir(fullfile(dirpath,'**','*.wav'));
+
+N = numel(files);
+feats = cell(N,1);
+types = cell(N,1);
+digits = cell(N,1);
+
+for i = 1:N
+    fp = fullfile(files(i).folder, files(i).name);
+    [x,Fs] = audioread(fp);
+    if size(x,2)>1, x = mean(x,2); end
+    if Fs ~= params.fs_target
+        x = resample(x, params.fs_target, Fs);
+        Fs = params.fs_target;
+    end
+
+    % --- MFCC extraction ---
+    feats{i} = compute_mfcc(x, Fs, params);
+
+    % --- PARSE LABELS ---
+    name = erase(files(i).name, ".wav");
+
+    % Format: T##n_digit
+    % First character = TYPE
+    types{i} = name(1);
+
+    % Digit is after _
+    tok = split(name, "_");
+    digits{i} = tok{end};
+end
+end
+%% --- DTW Distance ---
+function d = dtw_distance(X, Y, opts)
+% X and Y are (D × T) MFCC matrices
+
+% ---- Compute pairwise frame distances ----
+Tx = size(X,2);
+Ty = size(Y,2);
+
+D = zeros(Tx,Ty);
+
+for i = 1:Tx
+    diff = X(:,i) - Y;
+    D(i,:) = sqrt(sum(diff.^2,1));
+end
+
+% ---- Dynamic Programming ----
+DTW = inf(Tx+1, Ty+1);
+DTW(1,1) = 0;
+
+for i = 2:(Tx+1)
+    for j = 2:(Ty+1)
+        DTW(i,j) = D(i-1,j-1) + min([
+            DTW(i-1,j),   ... % insertion
+            DTW(i,j-1),   ... % deletion
+            DTW(i-1,j-1)  ... % match
+        ]);
+    end
+end
+
+d = DTW(Tx+1, Ty+1);
+end
+
+%% --- MFFC Matrix ---
+function mfcc_feats = compute_mfcc(x, Fs, params)
+% ---------------------------------------------------------------
+% compute_mfcc
+% Returns MFCC feature matrix [numFrames × numFeatures]
+% including Δ and ΔΔ if requested.
+%
+% params fields:
+%   fs_target
+%   frame_ms
+%   hop_ms
+%   num_ceps
+%   use_delta
+%   normalize
+% ---------------------------------------------------------------
+
+%% === Parameters ===
+N   = round(params.frame_ms/1000 * Fs);
+hop = round(params.hop_ms/1000 * Fs);
+num_ceps = params.num_ceps;
+
+%% === Pre-emphasis ===
+x = filter([1 -0.97], 1, x);
+
+%% === Framing & Window ===
+win = hamming(N, 'periodic');
+
+% padding to avoid boundary issues
+x = [x; zeros(N,1)];
+
+numFrames = 1 + floor((length(x)-N)/hop);
+mfcc_feats = zeros(numFrames, num_ceps);
+
+%% === Mel Filterbank (once per function) ===
+Nfft = 512;
+mel_fb = mel_filterbank(Fs, Nfft, 26);   % 26 mel filters
+
+%% === Process frame-by-frame ===
+frame_id = 1;
+for i = 1:hop:(length(x)-N)
+    frame = x(i:i+N-1) .* win;
+
+    % Power spectrum
+    X = abs(fft(frame, Nfft)).^2;
+    X = X(1:(Nfft/2+1));
+
+    % Mel energies
+    melE = mel_fb * X;
+    melE = log(melE + eps);   % log energy
+
+    % DCT → MFCC
+    c = dct(melE);
+    mfcc_feats(frame_id, :) = c(1:num_ceps);
+
+    frame_id = frame_id + 1;
+end
+
+%% === Delta and Delta-Delta ===
+if params.use_delta
+    d1 = deltas(mfcc_feats')';
+    d2 = deltas(d1')';
+    mfcc_feats = [mfcc_feats, d1, d2];
+end
+
+%% === Utterance-level CMVN normalization ===
+if params.normalize
+    mfcc_feats = (mfcc_feats - mean(mfcc_feats, 1)) ./ (std(mfcc_feats, [], 1) + 1e-8);
+end
+
+end
+
+% Delta coefficients
+function d = deltas(x)
+% x: D × T
+[D,T] = size(x);
+N = 2;
+d = zeros(D,T);
+den = 2 * sum((1:N).^2);
+
+for t = 1:T
+    acc = zeros(D,1);
+    for n = 1:N
+        t_plus  = min(T, t+n);
+        t_minus = max(1, t-n);
+        acc = acc + n*(x(:,t_plus) - x(:,t_minus));
+    end
+    d(:,t) = acc / den;
+end
+end
+
+% Mel Filter
+function H = mel_filterbank(Fs, Nfft, numFilters)
+% Return mel filterbank matrix (numFilters × (Nfft/2+1))
+
+Nfft2 = Nfft/2 + 1;
+fmax = Fs/2;
+
+mel = @(f) 1125*log(1 + f/700);
+inv_mel = @(m) 700*(exp(m/1125) - 1);
+
+mel_pts = linspace(mel(0), mel(fmax), numFilters+2);
+f_pts = inv_mel(mel_pts);
+
+bins = floor((Nfft+1) * f_pts / Fs);
+
+H = zeros(numFilters, Nfft2);
+
+for m = 1:numFilters
+    left = bins(m);
+    center = bins(m+1);
+    right = bins(m+2);
+
+    for k = left:center
+        H(m,k+1) = (k-left) / (center-left);
+    end
+    for k = center:right
+        H(m,k+1) = (right-k) / (right-center);
+    end
+end
+
+H = max(H, 0);
+end
+%% --- plot type ---
+function fig = plot_type_analysis(Ntest, pred_type, test_types)
+% ---------------------------------------------------------
+% plot_type_analysis
+% Creates a figure table summarizing recognition accuracy
+% for each speaker type (C, M, F, U).
+%
+% INPUTS:
+%   Ntest       - number of test samples
+%   pred_type   - cell array of predicted speaker types
+%   test_types  - cell array of true speaker types
+%
+% OUTPUT:
+%   fig         - figure handle
+% ---------------------------------------------------------
+
+% Ensure strings
+pred_type  = string(pred_type);
+test_types = string(test_types);
+
+% Unique types in dataset
+types = ["C","M","F","U"];  % you can change based on dataset
+
+num_types = numel(types);
+
+% Initialize summary table variables
+num_test  = zeros(num_types,1);
+num_right = zeros(num_types,1);
+acc       = zeros(num_types,1);
+err       = zeros(num_types,1);
+
+for k = 1:num_types
+    T = types(k);
+
+    idx = (test_types == T);      % samples belonging to this type
+    num_test(k) = sum(idx);
+
+    if num_test(k) > 0
+        num_right(k) = sum(pred_type(idx) == T);
+        acc(k) = num_right(k) / num_test(k);
+        err(k) = 1 - acc(k);
+    else
+        num_right(k) = 0;
+        acc(k) = 0;
+        err(k) = 1;
+    end
+end
+
+% ---------- TABLE FOR DISPLAY ----------
+summary_data = table(types', num_test, num_right, acc*100, err*100, ...
+    'VariableNames', {'Type','NumTests','Correct','AccuracyPct','ErrorPct'});
+
+% ---------- PLOT THE TABLE ----------
+fig = figure('Color','w', 'Name','Type Recognition Summary');
+uit = uitable(fig, 'Data', summary_data{:,:}, ...
+    'ColumnName', summary_data.Properties.VariableNames, ...
+    'Units','normalized', ...
+    'Position',[0 0 1 1], ...
+    'FontSize', 14);
+
+title("Per-Type Recognition Performance");
+
+end
+%% --- k-NN Classifier ---
+function pred_label = knn_classify(test_emb, train_embs, train_labels, k)
+% Classifies a single test embedding using k-Nearest Neighbors
+% test_emb: [1 x D] vector
+% train_embs: [N x D] matrix
+% train_labels: [N x 1] cell array of labels
+% k: number of neighbors
+    
+    % Compute Euclidean distance to all training examples
+    distances = pdist2(test_emb, train_embs); % [1 x N]
+    
+    % Find the indices of the K smallest distances
+    [~, sorted_indices] = sort(distances, 'ascend');
+    
+    % Get the labels of the K nearest neighbors
+    nearest_labels = train_labels(sorted_indices(1:k));
+    
+    % Determine the predicted label by majority vote
+    pred_label = char(mode(categorical(nearest_labels)));
+end
+
+%% --- DTW Classifier (1-NN) ---
+function pred_label = dtw_classify(mfcc_test, train_feats, train_labels)
+% Classifies a single test MFCC sequence using 1-NN with DTW distance
+% mfcc_test: [T_test x D] matrix
+% train_feats: [N x 1] cell array of [T_train x D] matrices
+% train_labels: [N x 1] cell array of labels
+    
+    N = numel(train_feats);
+    dtw_distances = zeros(N, 1);
+    
+    % Iterate over all training sequences and compute DTW
+    for i = 1:N
+        mfcc_train = train_feats{i};
+        % Compute DTW distance (using the existing helper function)
+        dtw_distances(i) = dtw_distance_supervised(mfcc_test', mfcc_train');
+    end
+    
+    % Find the index of the minimum distance (1-NN)
+    [min_dist, min_idx] = min(dtw_distances);
+    
+    % The predicted label is the label of the closest neighbor
+    pred_label = train_labels{min_idx};
+end
+
+%% --- DTW Distance (Core Logic) ---
+function d = dtw_distance_supervised(X, Y)
+% X and Y are (D × T) MFCC matrices (Features x Time) - MATLAB convention for DTW
+% ---- Compute pairwise frame distances (Euclidean) ----
+Tx = size(X,2); % Time length of X
+Ty = size(Y,2); % Time length of Y
+D = zeros(Tx,Ty);
+for i = 1:Tx
+    % X(:,i) is the D x 1 frame vector
+    % Y is the D x Ty matrix
+    diff = X(:,i) - Y;
+    D(i,:) = sqrt(sum(diff.^2,1));
+end
+% ---- Dynamic Programming ----
+DTW = inf(Tx+1, Ty+1);
+DTW(1,1) = 0;
+for i = 2:(Tx+1)
+    for j = 2:(Ty+1)
+        DTW(i,j) = D(i-1,j-1) + min([
+            DTW(i-1,j),   ... % insertion (vertical step)
+            DTW(i,j-1),   ... % deletion (horizontal step)
+            DTW(i-1,j-1)  ... % match (diagonal step)
+        ]);
+    end
+end
+d = DTW(Tx+1, Ty+1);
+end
+
+%% --- DTW Barycenter Averaging ---
+function template = compute_dba(seqs, n_iter)
+% seqs: cell array of [T x D] MFCC sequences
+% n_iter: number of DBA iterations
+% template: [T_template x D]
+
+if nargin < 2
+    n_iter = 10;
+end
+
+% 1. Initialize template: pick the longest sequence
+[~, idx] = max(cellfun(@(x) size(x,1), seqs));
+template = seqs{idx};
+
+for iter = 1:n_iter
+    % For each sequence, align with template using DTW
+    accum = zeros(size(template));
+    count = zeros(size(template,1), 1);
+    
+    for i = 1:numel(seqs)
+        seq = seqs{i};
+        [~, path] = dtw_path(seq', template');  % returns indices (seq_idx, temp_idx)
+        for p = 1:size(path,1)
+            seq_idx = path(p,1);
+            temp_idx = path(p,2);
+            accum(temp_idx,:) = accum(temp_idx,:) + seq(seq_idx,:);
+            count(temp_idx) = count(temp_idx) + 1;
+        end
+    end
+    
+    % Update template as the mean along DTW-aligned positions
+    template = accum ./ count;
+end
+end
+%% --- DTW Path --- 
+function [dist, path] = dtw_path(X, Y)
+% X: D x T1, Y: D x T2
+Tx = size(X,2);
+Ty = size(Y,2);
+D = zeros(Tx, Ty);
+
+for i = 1:Tx
+    diff = X(:,i) - Y;
+    D(i,:) = sqrt(sum(diff.^2,1));
+end
+
+% DP matrix
+DTW = inf(Tx+1, Ty+1);
+DTW(1,1) = 0;
+for i = 2:Tx+1
+    for j = 2:Ty+1
+        DTW(i,j) = D(i-1,j-1) + min([DTW(i-1,j), DTW(i,j-1), DTW(i-1,j-1)]);
+    end
+end
+
+% Backtracking to find path
+i = Tx+1;
+j = Ty+1;
+path = [];
+while i > 1 && j > 1
+    path = [[i-1, j-1]; path];
+    [~, idx] = min([DTW(i-1,j-1), DTW(i-1,j), DTW(i,j-1)]);
+    if idx == 1
+        i = i-1; j = j-1;
+    elseif idx == 2
+        i = i-1;
+    else
+        j = j-1;
+    end
+end
+
+dist = DTW(Tx+1, Ty+1);
+end
+
 %% ---save figure to picture---
 function figure_to_png(figHandle, filename, relative_save_path)
 % FIGURE_TO_PNG Saves a specified MATLAB figure handle as a high-quality PNG file.
