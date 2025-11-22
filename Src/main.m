@@ -16,7 +16,7 @@ relative_path_to_plots = '..\Data\Results\plot'; % Define the relative path from
 if ~isempty(Fs)
     fprintf('\nAnalysis using Fs = %d Hz and Bit Rate = %d bps is ready.\n', Fs, bitRate);
 end
-%{
+
 %% --- 1. Define Windows (Time Domain) ---
 
 % 1. Generate Window Vectors (using your first function)
@@ -313,7 +313,7 @@ problem6_error_fig_handle = ...
 figure_to_png(problem6_error_fig_handle, 'vocoder_performance_metrics_table', plots_folder_p6);
 
 fprintf('Problem 6 finished. Outputs saved to: %s\n', full_results_dir);
-%}
+
 
 %% -------------------------------------------------------------------------
 % Problem 7: Speech Digit + Speaker-Type Recognition (MFCC + DTW)
@@ -385,7 +385,7 @@ else
     save(test_cache, 'test_feats', 'test_types', 'test_digits', '-v7.3');
 end
 
-%% ==================== FEATURE AGGREGATION FOR K-NN =======================
+% ==================== FEATURE AGGREGATION FOR K-NN =======================
 fprintf('\nAggregating Mean+StdDev features for k-NN Speaker Type Model...\n');
 
 model_cache = fullfile(RESULTS_DIR, 'supervised_model_cache_multidba.mat');
@@ -438,7 +438,7 @@ save('supervised_model_cache_multidba.mat', ...
 end
 
 
-%% ==================== PREDICTION LOOP (FIXED) =========================
+% ==================== PREDICTION LOOP (FIXED) =========================
 results_file = fullfile(RESULTS_DIR, 'predictions.mat');
 
 if exist(results_file, 'file')
