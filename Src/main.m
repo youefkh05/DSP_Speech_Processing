@@ -339,8 +339,9 @@ params.use_delta = true;
 params.normalize = true;
 
 % Supervised Parameters
-KNN_K_TYPE = 5;   % K for k-NN speaker type classifier (on mean MFCC)
 KNN_K_DIGIT = 1;  % K for DTW-based digit classifier (1-NN is common for DTW)
+n_dba_iter     = 10;   % DBA iterations
+n_templates    = 3;    % Number of templates per speaker type (increase if needed)
 
 dtw_opts.use_builtin = exist('dtw','file') ~= 0;
 
@@ -366,7 +367,6 @@ else
     save(train_cache, 'train_feats', 'train_types', 'train_digits', '-v7.3');
 end
 
-
 % ================= LOAD TEST SET (with caching) ====================
 
 % Load test MFCCs
@@ -387,45 +387,95 @@ else
     fprintf("Saving TEST MFCC cache...\n");
     save(test_cache, 'test_feats', 'test_types', 'test_digits', '-v7.3');
 end
-% ================= CLASSIFIER TRAINING/PREPARATION (DTW Templates) ====================
 
-% Model cache file path
-model_cache = fullfile(RESULTS_DIR, 'supervised_model_cache.mat');
+%% ==================== COMPUTE MULTI-TEMPLATE DBA (FIXED) =======================
+model_cache = fullfile(RESULTS_DIR, 'supervised_model_cache_multidba.mat');
 
-% Check if cached model exists
-if exist(model_cache, 'file')
-    fprintf('\nLoading SUPERVISED model cache...\n');
+if exist(model_cache,'file')
+    fprintf('\nLoading multi-template DBA model cache...\n');
     S = load(model_cache);
-    train_feats = S.train_feats;
-    train_digits = S.train_digits;
-    train_types = S.train_types;
-    type_templates = S.type_templates;  % DTW-based templates
+    type_templates = S.type_templates; % cell: {type, template_id}
 else
-    fprintf('\nComputing DTW-based templates for speaker types...\n');
-    types = {'C','M','F','U'};
-    type_templates = cell(numel(types), 1);
+    fprintf('Computing multi-template DBA for speaker types using Mean + StdDev features...\n');
+    type_templates = cell(numel(TYPE_LIST), n_templates);
 
-    for t = 1:numel(types)
-        idx_type = strcmp(train_types, types{t});
+    for t = 1:numel(TYPE_LIST)
+        type_name = TYPE_LIST{t};
+        idx_type = strcmp(train_types, type_name);
         seqs = train_feats(idx_type);
+        N_seq = numel(seqs);
         
-        % Compute DTW Barycenter Average (DBA) template
-        type_templates{t} = compute_dba(seqs, 10); % 10 iterations
+        fprintf('Processing Type %s: Found %d sequences.\n', type_name, N_seq);
+
+        % -------------------
+        % FIX: Feature Aggregation using Mean AND StdDev for k-means
+        % -------------------
+        
+        % Step 1: compute Mean and StdDev MFCCs per sequence
+        seq_features = cell(N_seq, 1);
+        for i = 1:N_seq
+            mfcc = seqs{i};
+            mean_mfcc = mean(mfcc, 1);
+            std_mfcc = std(mfcc, [], 1);
+            % Concatenate Mean and StdDev features (1 x 2D vector)
+            seq_features{i} = [mean_mfcc, std_mfcc];
+        end
+        
+        % Step 2: convert to N x 2D feature matrix
+        seq_matrix = vertcat(seq_features{:});
+
+        % Step 3: k-means clustering initialization
+        n_clusters = min(n_templates, N_seq);
+        
+        if N_seq == 0
+            warning('Type %s has no training sequences. Skipping template generation.', type_name);
+            continue;
+        elseif n_clusters == 1
+            cluster_idx = ones(N_seq, 1); % all sequences in one cluster
+        else
+            % Use k-means on the Mean+StdDev features
+            cluster_idx = kmeans(seq_matrix, n_clusters, 'Replicates', 5);
+        end
+
+
+        % -------------------
+        % Step 4: Compute DBA for each cluster
+        % -------------------
+        for k = 1:n_templates
+            cluster_seqs = seqs(cluster_idx == k);
+            
+            if isempty(cluster_seqs)
+                % Fallback: If a cluster is empty (e.g., if n_templates > N_seq),
+                % use the sequence closest to the nearest cluster centroid (or just a random sequence).
+                % For simplicity and safety, we will just copy a successful template 
+                % from the same type, or use the longest sequence if no successful template exists yet.
+                if k > 1
+                    type_templates{t,k} = type_templates{t,k-1}; % Copy previous template
+                elseif N_seq > 0
+                    % Fallback to longest sequence in the whole type group
+                    [~,idx_long] = max(cellfun(@(x) size(x,1), seqs));
+                    cluster_seqs = seqs(idx_long);
+                    type_templates{t,k} = compute_dba(cluster_seqs, n_dba_iter);
+                else
+                    % Type has zero sequences, template remains empty
+                    type_templates{t,k} = [];
+                end
+            else
+                % Normal DBA calculation
+                type_templates{t,k} = compute_dba(cluster_seqs, n_dba_iter);
+            end
+        end
     end
-    
-    % Save everything for future use
-    fprintf('Saving SUPERVISED model cache with DTW templates...\n');
-    save(model_cache, 'train_feats', 'train_types', 'train_digits', 'type_templates', '-v7.3');
+
+    save(model_cache,'train_feats','train_types','train_digits','type_templates','-v7.3');
 end
+fprintf('Multi-template DBA model ready (Templates per Type: %d).\n', n_templates);
 
-fprintf('\nDTW-template classifier for Speaker Type ready.\n');
-fprintf('DTW classifier for Digits ready (K=%d).\n', KNN_K_DIGIT);
-
-% ==================== PREDICTION ====================
+% ==================== PREDICTION LOOP =========================
 results_file = fullfile(RESULTS_DIR, 'predictions.mat');
 
 if exist(results_file, 'file')
-    fprintf('Predictions file already exists: %s\nSkipping prediction.\n', results_file);
+    fprintf('\nPredictions file already exists: %s\nSkipping prediction.\n', results_file);
     
     % Load existing predictions
     S = load(results_file);
@@ -433,47 +483,56 @@ if exist(results_file, 'file')
     pred_type_str   = S.pred_type_str;
     test_digits_str = S.test_digits_str;
     pred_digit_str  = S.pred_digit_str;
-    
 else
     Ntest = numel(test_feats);
     pred_type  = cell(Ntest,1);
     pred_digit = cell(Ntest,1);
-
-    fprintf("Starting SUPERVISED prediction on %d test samples...\n", Ntest);
+    
+    fprintf('\nStarting prediction on %d test samples...\n', Ntest);
 
     for i = 1:Ntest
         mfcc_test = test_feats{i};
-
-        % --- 1. Predict Speaker Type using DTW templates ---
+        
+        % --- 1. Speaker Type: minimum DTW over multi-templates ---
         min_d = inf;
-        for t = 1:numel(type_templates)
-            template = type_templates{t};
-            d = dtw_distance_supervised(mfcc_test', template');  % existing DTW function
-            if d < min_d
-                min_d = d;
-                pred_type{i} = TYPE_LIST(t);
+        best_type = '';
+        
+        for t = 1:numel(TYPE_LIST)
+            type_name = TYPE_LIST{t};
+            for k = 1:n_templates
+                template = type_templates{t,k};
+                
+                % Skip if the template is empty (e.g., if type had no training data)
+                if isempty(template)
+                    continue;
+                end
+                
+                % Calculate DTW distance
+                d = dtw_distance_supervised(mfcc_test', template');
+                
+                % Normalize by sequence length sum (T_test + T_template)
+                d = d / (size(mfcc_test,1) + size(template,1));
+                
+                if d < min_d
+                    min_d = d;
+                    best_type = type_name;
+                end
             end
         end
-
-        % --- 2. Predict Digit (DTW on full MFCC sequences) ---
+        pred_type{i} = best_type;
+        
+        % --- 2. Digit recognition using 1-NN DTW ---
         pred_digit{i} = dtw_classify(mfcc_test, train_feats, train_digits);
-
+        
         % --- 3. Print Status ---
-        true_type = test_types{i};
+        true_type  = test_types{i};
         true_digit = test_digits{i};
-
         is_correct = (strcmp(pred_type{i}, true_type) && strcmp(pred_digit{i}, true_digit));
-        status = char(string(is_correct));
-
-        fprintf('Test %d/%d true(%s,%s) predict(%s,%s) %s\n', ...
-            i, Ntest, ...
-            string(true_type), string(true_digit), ...
-            string(pred_type{i}), string(pred_digit{i}), ...
-            status);
+        
+        fprintf('Test %d/%d true(%s,%s) pred(%s,%s) %d\n', ...
+            i,Ntest,true_type,true_digit,pred_type{i},pred_digit{i},is_correct);
     end
-
-    fprintf("Prediction complete. Generating confusion matrices and saving results...\n");
-
+    
     % --- Convert final cell arrays to string arrays ---
     test_types_str  = string(test_types);
     pred_type_str   = string(pred_type);
@@ -485,21 +544,19 @@ else
     fprintf('Prediction results saved to %s\n', results_file);
 end
 
-
-
 % --- Confusion matrices ---
 
 % ---- Type Confusion (k-NN) ----
 fig1 = figure('Name', 'Speaker Type Recognition (k-NN)');
 confusionchart(categorical(test_types_str), categorical(pred_type_str));
 title("Speaker Type Recognition (k-NN Classification, K=" + KNN_K_TYPE + ")");
-saveas(fig1, fullfile(PLOT_DIR, "type_confusion_knn.png"));
+figure_to_png(fig1, 'type_confusion_knn', PLOT_DIR);
 
 % ---- Digit Confusion (DTW) ----
 fig2 = figure('Name', 'Digit Recognition (DTW)');
 confusionchart(categorical(test_digits_str), categorical(pred_digit_str));
 title("Digit Recognition (DTW Classification)");
-saveas(fig2, fullfile(PLOT_DIR, "digit_confusion_dtw.png"));
+figure_to_png(fig2, 'digit_confusion_dtw', PLOT_DIR);
 
 % --- Summary Table ---
 % If predictions were loaded
@@ -507,12 +564,9 @@ Ntest = numel(test_types_str);  % number of test samples
 
 % Use string arrays for plotting
 fig3 = plot_type_analysis(Ntest, pred_type_str, test_types_str);
-saveas(fig3, fullfile(PLOT_DIR, "type_summary_table_dtw.png"));
+figure_to_png(fig3, 'type_summary_table_dtw', PLOT_DIR);
 fprintf("Speaker type summary table saved to: %s\n", fullfile(PLOT_DIR, "type_summary_table_dtw.png"));
 
-% Optional: reusable figure handle function
-type_fig_handle = plot_type_analysis(Ntest, pred_type_str, test_types_str);
-figure_to_png(type_fig_handle, 'Per-Type Recognition Performance', RESULTS_DIR);
 
 
 
@@ -2116,37 +2170,6 @@ for i = 1:N
     tok = split(name, "_");
     digits{i} = tok{end};
 end
-end
-%% --- DTW Distance ---
-function d = dtw_distance(X, Y, opts)
-% X and Y are (D × T) MFCC matrices
-
-% ---- Compute pairwise frame distances ----
-Tx = size(X,2);
-Ty = size(Y,2);
-
-D = zeros(Tx,Ty);
-
-for i = 1:Tx
-    diff = X(:,i) - Y;
-    D(i,:) = sqrt(sum(diff.^2,1));
-end
-
-% ---- Dynamic Programming ----
-DTW = inf(Tx+1, Ty+1);
-DTW(1,1) = 0;
-
-for i = 2:(Tx+1)
-    for j = 2:(Ty+1)
-        DTW(i,j) = D(i-1,j-1) + min([
-            DTW(i-1,j),   ... % insertion
-            DTW(i,j-1),   ... % deletion
-            DTW(i-1,j-1)  ... % match
-        ]);
-    end
-end
-
-d = DTW(Tx+1, Ty+1);
 end
 
 %% --- MFFC Matrix ---
